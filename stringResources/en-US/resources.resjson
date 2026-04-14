@@ -1,0 +1,10 @@
+{
+    "Visual_Short_Description": "Horizontal progress bars with zoned colour coding for tracking utilisation metrics.",
+    "Visual_Long_Description": "Display category-level progress bars with configurable safe, warning, and danger colour zones. Supports list and grid layouts.",
+    "Visual_EmptyState_Prefix": "Add ",
+    "Visual_Field_Category": "Category",
+    "Visual_Field_CurrentValue": "Current Value",
+    "Visual_Field_MaxValue": "Max Value",
+    "Visual_EmptyState_And": "and",
+    "Visual_EmptyState_Suffix": "fields to display progress bars."
+}
