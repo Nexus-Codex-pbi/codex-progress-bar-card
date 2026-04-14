@@ -1,0 +1,170 @@
+{
+    "dataRoles": [
+        {
+            "displayName": "Category",
+            "name": "category",
+            "kind": "Grouping",
+            "description": "Row label (e.g. VehicleID or Beat)"
+        },
+        {
+            "displayName": "Current Value",
+            "name": "currentValue",
+            "kind": "Measure",
+            "description": "Actual value (e.g. 156 kg)"
+        },
+        {
+            "displayName": "Max Value",
+            "name": "maxValue",
+            "kind": "Measure",
+            "description": "Limit value (e.g. 200 kg)"
+        },
+        {
+            "displayName": "Label",
+            "name": "label",
+            "kind": "Measure",
+            "description": "Optional subtitle (e.g. driver name)"
+        },
+        {
+            "displayName": "Sort Order",
+            "name": "sortOrder",
+            "kind": "Measure",
+            "description": "Optional numeric sort order (ascending)"
+        }
+    ],
+    "objects": {
+        "barSettings": {
+            "properties": {
+                "barHeight": {
+                    "type": { "numeric": true }
+                },
+                "barRadius": {
+                    "type": { "numeric": true }
+                },
+                "trackColor": {
+                    "type": { "fill": { "solid": { "color": true } } }
+                },
+                "layout": {
+                    "type": {
+                        "enumeration": [
+                            { "displayName": "List", "value": "list" },
+                            { "displayName": "Grid", "value": "grid" }
+                        ]
+                    }
+                },
+                "rowHeight": {
+                    "type": { "numeric": true }
+                },
+                "rowBackground": {
+                    "type": { "fill": { "solid": { "color": true } } }
+                }
+            }
+        },
+        "zoneSettings": {
+            "properties": {
+                "colorMode": {
+                    "type": {
+                        "enumeration": [
+                            { "displayName": "Fixed", "value": "fixed" },
+                            { "displayName": "Zoned", "value": "zoned" }
+                        ]
+                    }
+                },
+                "fixedColor": {
+                    "type": { "fill": { "solid": { "color": true } } }
+                },
+                "safeMax": {
+                    "type": { "numeric": true }
+                },
+                "warningMax": {
+                    "type": { "numeric": true }
+                },
+                "safeColor": {
+                    "type": { "fill": { "solid": { "color": true } } }
+                },
+                "warningColor": {
+                    "type": { "fill": { "solid": { "color": true } } }
+                },
+                "dangerColor": {
+                    "type": { "fill": { "solid": { "color": true } } }
+                }
+            }
+        },
+        "valueSettings": {
+            "properties": {
+                "showPercentage": {
+                    "type": { "bool": true }
+                },
+                "showValues": {
+                    "type": { "bool": true }
+                },
+                "valuePrefix": {
+                    "type": { "text": true }
+                },
+                "valueUnit": {
+                    "type": { "text": true }
+                },
+                "fontSize": {
+                    "type": { "numeric": true }
+                },
+                "categoryColor": {
+                    "type": { "fill": { "solid": { "color": true } } }
+                },
+                "categoryFontSize": {
+                    "type": { "numeric": true }
+                },
+                "valuesColor": {
+                    "type": { "fill": { "solid": { "color": true } } }
+                },
+                "valuesFontSize": {
+                    "type": { "numeric": true }
+                },
+                "labelColor": {
+                    "type": { "fill": { "solid": { "color": true } } }
+                }
+            }
+        },
+        "axisSettings": {
+            "properties": {
+                "showAxisTitles": {
+                    "type": { "bool": true }
+                },
+                "xAxisTitle": {
+                    "type": { "text": true }
+                },
+                "yAxisTitle": {
+                    "type": { "text": true }
+                }
+            }
+        }
+    },
+    "dataViewMappings": [
+        {
+            "categorical": {
+                "categories": {
+                    "for": { "in": "category" },
+                    "dataReductionAlgorithm": { "top": { "count": 500 } }
+                },
+                "values": {
+                    "select": [
+                        { "bind": { "to": "currentValue" } },
+                        { "bind": { "to": "maxValue" } },
+                        { "bind": { "to": "label" } },
+                        { "bind": { "to": "sortOrder" } }
+                    ]
+                }
+            }
+        }
+    ],
+    "supportsHighlight": true,
+    "supportsKeyboardFocus": true,
+    "supportsLandingPage": true,
+    "supportsEmptyDataView": true,
+    "supportsMultiVisualSelection": true,
+    "tooltips": {
+        "supportedTypes": {
+            "default": true,
+            "canvas": true
+        }
+    },
+    "privileges": []
+}

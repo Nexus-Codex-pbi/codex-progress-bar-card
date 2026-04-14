@@ -1,0 +1,21 @@
+{
+  "visual": {
+    "name": "codexProgressBarCard",
+    "displayName": "Codex Progress Bar Card",
+    "guid": "codexProgressBarCardB1C2D3E4F5A6B7C8D9E0F1A2B3C4D5E6",
+    "visualClassName": "Visual",
+    "version": "1.0.0.0",
+    "description": "Horizontal progress bars with zoned colour coding for utilisation tracking.",
+    "supportUrl": "https://nexuscodex.nexus/support",
+    "gitHubUrl": ""
+  },
+  "apiVersion": "5.10.0",
+  "author": { "name": "Nexus Codex", "email": "support@nexuscodex.nexus" },
+  "assets": { "icon": "assets/icon.png" },
+  "externalJS": null,
+  "style": "style/visual.less",
+  "capabilities": "capabilities.json",
+  "dependencies": null,
+  "stringResources": ["stringResources/en-US/resources.resjson"],
+  "version": "1.0.0.0"
+}
