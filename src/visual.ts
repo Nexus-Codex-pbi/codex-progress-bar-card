@@ -17,7 +17,11 @@ import ISandboxExtendedColorPalette = powerbi.extensibility.ISandboxExtendedColo
 import IVisualHost = powerbi.extensibility.visual.IVisualHost;
 import DataView = powerbi.DataView;
 
+import { dataViewWildcard } from "powerbi-visuals-utils-dataviewutils";
+import { ColorHelper } from "powerbi-visuals-utils-colorutils";
+
 import { VisualFormattingSettingsModel } from "./settings";
+import { toRgba } from "../../_shared/formatting/colorHelpers";
 import { clamp, safeNumber, CODEX_TOKENS } from "./utils";
 
 /** Parsed row data for a single progress bar */
@@ -43,6 +47,12 @@ export class Visual implements IVisual {
     private tooltipService: ITooltipService;
     private isHighContrast: boolean = false;
     private colorPalette: ISandboxExtendedColorPalette;
+
+    // State for the Fixed Colour fx wiring (TRANS-04) — per-row selectionIds
+    // are already carried on BarRow, but the per-instance object overrides
+    // (categories.objects[rowIndex]) only live on the raw DataViewCategoryColumn.
+    private categoricalCategories: powerbi.DataViewCategoryColumn | undefined;
+    private fixedColorHelper: ColorHelper | null = null;
 
     constructor(options: VisualConstructorOptions) {
         this.formattingSettingsService = new FormattingSettingsService();
@@ -77,6 +87,29 @@ export class Visual implements IVisual {
                 options.dataViews?.[0]
             );
 
+            // ─── Dedicated background layer (D-05) ─────────────────────
+            // Suite-wide shared Background card (Colour + Transparency,
+            // sourced from _shared/formatting/), painted on `this.container`
+            // — the outer card-list render root appended directly to
+            // options.element — never on the existing per-row
+            // `rowEl.style.backgroundColor` (barSettings.rowBackground) or
+            // per-bar `track`/`fill` colours (T-06-01: no bleed between the
+            // container layer and per-row/per-bar colour layers). Applied
+            // unconditionally (before the empty-state early return) so an
+            // empty-state render also honours it. Its transparency default
+            // is overridden to 100 in settings.ts specifically so an OLD
+            // saved report (this property never previously existed) renders
+            // alpha 0 — pixel-identical to "nothing painted" (D-06) — while
+            // still exposing a real, working Colour + Transparency control.
+            // Preserves the existing isHighContrast short-circuit: never
+            // applies the new colour/transparency when high contrast is on.
+            const background = this.formattingSettings.background;
+            const bgHex = background.backgroundColor.value?.value ?? "#ffffff";
+            const bgTransparencyPct = background.transparency.value ?? 100;
+            this.container.style.backgroundColor = this.isHighContrast
+                ? ""
+                : toRgba(bgHex, bgTransparencyPct);
+
             while (this.container.firstChild) this.container.removeChild(this.container.firstChild);
 
             const dataView: DataView = options.dataViews?.[0];
@@ -92,6 +125,31 @@ export class Visual implements IVisual {
                 this.events.renderingFinished(options);
                 return;
             }
+
+            // ─── Conditional formatting (fx) wiring — Fixed Colour (TRANS-04) ──
+            // The zoneSettings.fixedColor ColorPicker already carried a bare
+            // `instanceKind: ConstantOrRule` declaration, but with no
+            // `selector`/`altConstantSelector` wired it was inert (Pitfall
+            // 5). Wired here: a dataViewWildcard selector (so a rule can
+            // match this property's instances/totals) + an
+            // altConstantSelector bound to the first row's selectionId (the
+            // "set for all" swatch edit path), resolved per-row at render
+            // via ColorHelper.getColorForMeasure against each category's own
+            // per-instance object overrides (categoricalCategories.objects[rowIndex]) —
+            // same pattern already proven on pbiTimeBreakdown's Total Colour.
+            this.categoricalCategories = dataView.categorical?.categories?.[0];
+            const zoneSettingsFx = this.formattingSettings.zoneSettingsCard;
+            zoneSettingsFx.fixedColor.selector = dataViewWildcard.createDataViewWildcardSelector(
+                dataViewWildcard.DataViewWildcardMatchingOption.InstancesAndTotals
+            );
+            zoneSettingsFx.fixedColor.altConstantSelector = rows[0]?.selectionId
+                ? rows[0].selectionId.getSelector()
+                : undefined;
+            this.fixedColorHelper = new ColorHelper(
+                this.host.colorPalette,
+                { objectName: "zoneSettings", propertyName: "fixedColor" },
+                zoneSettingsFx.fixedColor.value.value
+            );
 
             const barSettings = this.formattingSettings.barSettingsCard;
             const layout = barSettings.layout.value?.value || "list";
@@ -110,8 +168,8 @@ export class Visual implements IVisual {
                 this.container.style.gridTemplateColumns = "";
             }
 
-            for (const row of rows) {
-                this.renderRow(row);
+            for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
+                this.renderRow(rows[rowIndex], rowIndex);
             }
 
             // Axis titles
@@ -245,7 +303,7 @@ export class Visual implements IVisual {
     }
 
     /** Render a single progress bar row */
-    private renderRow(row: BarRow): void {
+    private renderRow(row: BarRow, rowIndex: number): void {
         const barSettings = this.formattingSettings.barSettingsCard;
         const zoneSettings = this.formattingSettings.zoneSettingsCard;
         const valueSettings = this.formattingSettings.valueSettingsCard;
@@ -272,7 +330,7 @@ export class Visual implements IVisual {
         const labelColor = this.isHighContrast ? hcFg : (valueSettings.labelColor.value?.value || "#8a8985");
 
         // Determine bar fill colour
-        const fillColor = this.isHighContrast ? hcFg : this.getBarColor(row.percentage);
+        const fillColor = this.isHighContrast ? hcFg : this.getBarColor(row.percentage, rowIndex);
 
         // Row container
         const rowEl = document.createElement("div");
@@ -380,12 +438,19 @@ export class Visual implements IVisual {
     }
 
     /** Get bar colour based on zone settings and percentage */
-    private getBarColor(percentage: number): string {
+    private getBarColor(percentage: number, rowIndex: number): string {
         const zoneSettings = this.formattingSettings.zoneSettingsCard;
         const colorMode = zoneSettings.colorMode.value?.value || "zoned";
 
         if (colorMode === "fixed") {
-            return zoneSettings.fixedColor.value?.value || CODEX_TOKENS.primary;
+            // Per-row Fixed Colour resolution (TRANS-04 fx): reads the
+            // rule-evaluated fill (if a rule is set) via the official
+            // ColorHelper.getColorForMeasure path against this row's own
+            // per-instance object overrides, falling back to the static
+            // format-pane value otherwise.
+            const fixedColorDefault = zoneSettings.fixedColor.value?.value || CODEX_TOKENS.primary;
+            const instanceObjects = this.categoricalCategories?.objects?.[rowIndex];
+            return this.fixedColorHelper?.getColorForMeasure(instanceObjects, "fixedColor") ?? fixedColorDefault;
         }
 
         // Zoned mode — low fill = danger, high fill = safe

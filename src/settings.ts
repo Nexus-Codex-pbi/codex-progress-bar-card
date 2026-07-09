@@ -8,6 +8,8 @@ import FormattingSettingsCard = formattingSettings.SimpleCard;
 import FormattingSettingsSlice = formattingSettings.Slice;
 import FormattingSettingsModel = formattingSettings.Model;
 
+import { BackgroundSettings } from "../../_shared/formatting/backgroundSettings";
+
 const ConstantOrRule = powerbi.VisualEnumerationInstanceKinds.ConstantOrRule;
 
 /**
@@ -285,6 +287,29 @@ export class VisualFormattingSettingsModel extends FormattingSettingsModel {
     zoneSettingsCard = new ZoneSettingsCard();
     valueSettingsCard = new ValueSettingsCard();
     axisSettingsCard = new AxisSettingsCard();
+    background = new BackgroundSettings();
 
-    cards = [this.barSettingsCard, this.zoneSettingsCard, this.valueSettingsCard, this.axisSettingsCard];
+    constructor() {
+        super();
+        // D-06 default-preservation override (per-visual instance only —
+        // _shared/formatting/backgroundSettings.ts itself is untouched,
+        // D-11): pbiProgressBarCard's PRE-EXISTING default was "no
+        // background ever painted" — confirmed via direct inspection of
+        // src/visual.ts's update()/renderRow(): `this.container` (the
+        // outer card-list render root appended to options.element) never
+        // has a background-color set anywhere; only per-row
+        // (barSettings.rowBackground) and per-bar (barSettings.trackColor)
+        // colours are painted, and neither is the container/canvas layer.
+        // The frozen shared Background card's own default (opaque white,
+        // transparency 0) would regress every old saved report that never
+        // touched this brand-new property to a suddenly-opaque white
+        // container. Overriding the TRANSPARENCY default to 100 makes
+        // toRgba(...) resolve to alpha 0 regardless of colour — pixel-
+        // identical to "nothing painted" — while still exposing a real,
+        // working Colour + Transparency control on the container layer
+        // only (T-06-01: never conflated with rowBackground/trackColor).
+        this.background.transparency.value = 100;
+    }
+
+    cards = [this.barSettingsCard, this.zoneSettingsCard, this.valueSettingsCard, this.axisSettingsCard, this.background];
 }
