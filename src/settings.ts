@@ -9,8 +9,15 @@ import FormattingSettingsSlice = formattingSettings.Slice;
 import FormattingSettingsModel = formattingSettings.Model;
 
 import { BackgroundSettings } from "../../_shared/formatting/backgroundSettings";
+import { TitleSettings } from "../../_shared/formatting/titleSettings";
+import { alignSlice, alignSelfFor, textAlignFor, makeFontControl } from "../../_shared/formatting/textFormatting";
 
 const ConstantOrRule = powerbi.VisualEnumerationInstanceKinds.ConstantOrRule;
+
+// TitleSettings + text-formatting helpers now live in _shared/formatting/
+// (D-13, D-14). Re-exported so visual.ts can import them from "./settings"
+// (stable import path).
+export { TitleSettings, alignSlice, alignSelfFor, textAlignFor };
 
 /**
  * Bar Settings Card — controls bar dimensions and layout
@@ -199,12 +206,21 @@ class ValueSettingsCard extends FormattingSettingsCard {
         instanceKind: ConstantOrRule
     });
 
-    categoryFontSize = new formattingSettings.NumUpDown({
-        name: "categoryFontSize",
-        displayName: "Category Font Size",
-        description: "Font size for category names (0 = use main font size)",
-        value: 0
-    });
+    // Category label text — FontControl composite reuses the existing
+    // "categoryFontSize" property name (D-06/D-07: additive-only, no
+    // schema rename; the "0 = use main font size" convention on
+    // categoryFontSize is preserved unchanged in visual.ts) alongside NEW
+    // sibling properties (family/bold/italic/underline). Bold defaults
+    // true to match the pre-existing CSS-hardcoded font-weight:600 on
+    // .progress-category (render-nothing-default parity — weightFor idiom
+    // in visual.ts).
+    private categoryFontBundle = makeFontControl("category", { fontSize: 0, bold: true });
+    categoryFontFamily = this.categoryFontBundle.fontFamily;
+    categoryFontSize = this.categoryFontBundle.fontSize;
+    categoryBold = this.categoryFontBundle.bold;
+    categoryItalic = this.categoryFontBundle.italic;
+    categoryUnderline = this.categoryFontBundle.underline;
+    categoryFont = this.categoryFontBundle.control;
 
     valuesColor = new formattingSettings.ColorPicker({
         name: "valuesColor",
@@ -214,12 +230,17 @@ class ValueSettingsCard extends FormattingSettingsCard {
         instanceKind: ConstantOrRule
     });
 
-    valuesFontSize = new formattingSettings.NumUpDown({
-        name: "valuesFontSize",
-        displayName: "Values Font Size",
-        description: "Font size for values text (0 = use main font size)",
-        value: 0
-    });
+    // Values text (current/max + percentage) — reuses "valuesFontSize"
+    // ("0 = use main font size" convention preserved); Bold defaults false
+    // (off-state renders the pre-existing unset/normal font-weight — no
+    // font-weight was ever hardcoded on .progress-values).
+    private valuesFontBundle = makeFontControl("values", { fontSize: 0, bold: false });
+    valuesFontFamily = this.valuesFontBundle.fontFamily;
+    valuesFontSize = this.valuesFontBundle.fontSize;
+    valuesBold = this.valuesFontBundle.bold;
+    valuesItalic = this.valuesFontBundle.italic;
+    valuesUnderline = this.valuesFontBundle.underline;
+    valuesFont = this.valuesFontBundle.control;
 
     labelColor = new formattingSettings.ColorPicker({
         name: "labelColor",
@@ -229,6 +250,20 @@ class ValueSettingsCard extends FormattingSettingsCard {
         instanceKind: ConstantOrRule
     });
 
+    // Optional subtitle "label" text — brand-new dedicated font composite
+    // (this surface had NO independent size/family/style controls before;
+    // it derived its size from valuesFontSize - 2, clamped to a 9px
+    // minimum). "0 = use the pre-existing derived size" preserves that
+    // exact prior behaviour at default; Bold defaults false (no
+    // font-weight was ever hardcoded on .progress-label).
+    private labelFontBundle = makeFontControl("label", { fontSize: 0, bold: false });
+    labelFontFamily = this.labelFontBundle.fontFamily;
+    labelFontSize = this.labelFontBundle.fontSize;
+    labelBold = this.labelFontBundle.bold;
+    labelItalic = this.labelFontBundle.italic;
+    labelUnderline = this.labelFontBundle.underline;
+    labelFont = this.labelFontBundle.control;
+
     name: string = "valueSettings";
     displayName: string = "Value Settings";
     slices: Array<FormattingSettingsSlice> = [
@@ -237,10 +272,11 @@ class ValueSettingsCard extends FormattingSettingsCard {
         this.valuePrefix,
         this.valueUnit,
         this.fontSize,
+        this.categoryFont,
         this.categoryColor,
-        this.categoryFontSize,
+        this.valuesFont,
         this.valuesColor,
-        this.valuesFontSize,
+        this.labelFont,
         this.labelColor
     ];
 }
@@ -283,6 +319,7 @@ class AxisSettingsCard extends FormattingSettingsCard {
  * Visual Formatting Settings Model
  */
 export class VisualFormattingSettingsModel extends FormattingSettingsModel {
+    titleSettings = new TitleSettings();
     barSettingsCard = new BarSettingsCard();
     zoneSettingsCard = new ZoneSettingsCard();
     valueSettingsCard = new ValueSettingsCard();
@@ -311,5 +348,5 @@ export class VisualFormattingSettingsModel extends FormattingSettingsModel {
         this.background.transparency.value = 100;
     }
 
-    cards = [this.barSettingsCard, this.zoneSettingsCard, this.valueSettingsCard, this.axisSettingsCard, this.background];
+    cards = [this.titleSettings, this.barSettingsCard, this.zoneSettingsCard, this.valueSettingsCard, this.axisSettingsCard, this.background];
 }

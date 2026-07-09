@@ -20,7 +20,7 @@ import DataView = powerbi.DataView;
 import { dataViewWildcard } from "powerbi-visuals-utils-dataviewutils";
 import { ColorHelper } from "powerbi-visuals-utils-colorutils";
 
-import { VisualFormattingSettingsModel } from "./settings";
+import { VisualFormattingSettingsModel, alignSelfFor, textAlignFor } from "./settings";
 import { toRgba } from "../../_shared/formatting/colorHelpers";
 import { clamp, safeNumber, CODEX_TOKENS } from "./utils";
 
@@ -53,6 +53,8 @@ export class Visual implements IVisual {
     // (categories.objects[rowIndex]) only live on the raw DataViewCategoryColumn.
     private categoricalCategories: powerbi.DataViewCategoryColumn | undefined;
     private fixedColorHelper: ColorHelper | null = null;
+    // fx (TEXT-02) state — Values/percentage label colour
+    private valuesColorHelper: ColorHelper | null = null;
 
     constructor(options: VisualConstructorOptions) {
         this.formattingSettingsService = new FormattingSettingsService();
@@ -112,6 +114,13 @@ export class Visual implements IVisual {
 
             while (this.container.firstChild) this.container.removeChild(this.container.firstChild);
 
+            // ─── Visual Title (iframe-internal, Policy 1180.2.5) ───────
+            // Painted on the outer container layer only (T-06-01, matching
+            // the Background card scope) — a plain in-flow div ahead of
+            // the row list / empty state, so it appears whether or not
+            // data is bound.
+            this.renderTitle();
+
             const dataView: DataView = options.dataViews?.[0];
             if (!dataView?.categorical?.categories?.[0]?.values?.length) {
                 this.renderEmptyState();
@@ -149,6 +158,24 @@ export class Visual implements IVisual {
                 this.host.colorPalette,
                 { objectName: "zoneSettings", propertyName: "fixedColor" },
                 zoneSettingsFx.fixedColor.value.value
+            );
+
+            // ─── Conditional formatting (fx) wiring — Values/Percentage
+            // Label Colour (TEXT-02). Same wildcard-selector +
+            // altConstantSelector + ColorHelper.getColorForMeasure pattern
+            // as Fixed Colour above, resolved per-row against each
+            // category's own per-instance object overrides.
+            const valueSettingsFx = this.formattingSettings.valueSettingsCard;
+            valueSettingsFx.valuesColor.selector = dataViewWildcard.createDataViewWildcardSelector(
+                dataViewWildcard.DataViewWildcardMatchingOption.InstancesAndTotals
+            );
+            valueSettingsFx.valuesColor.altConstantSelector = rows[0]?.selectionId
+                ? rows[0].selectionId.getSelector()
+                : undefined;
+            this.valuesColorHelper = new ColorHelper(
+                this.host.colorPalette,
+                { objectName: "valueSettings", propertyName: "valuesColor" },
+                valueSettingsFx.valuesColor.value.value
             );
 
             const barSettings = this.formattingSettings.barSettingsCard;
@@ -238,6 +265,39 @@ export class Visual implements IVisual {
         }
     }
 
+    /** Render the shared Visual Title (D-14) as a plain in-flow div ahead
+     *  of the row list / empty state. Painted on `this.container` only
+     *  (T-06-01 — same layer scope as the Background card, never
+     *  conflated with per-row/per-bar colours). No-op (renders nothing)
+     *  when Show Title is off or Title Text is empty (D-06). */
+    private renderTitle(): void {
+        const t = this.formattingSettings.titleSettings;
+        if (!t?.showTitle?.value || !t?.titleText?.value) return;
+
+        const titleAlignVal = String((t as any).titleAlign?.value || "left");
+        const titleEl = document.createElement("div");
+        titleEl.className = "progress-bar-card-title";
+        titleEl.textContent = String(t.titleText.value);
+        if (t.titleFontFamily?.value) titleEl.style.fontFamily = t.titleFontFamily.value;
+        if (t.titleFontSize?.value) titleEl.style.fontSize = `${t.titleFontSize.value}px`;
+        titleEl.style.fontWeight = t.titleBold?.value ? "700" : "400";
+        titleEl.style.fontStyle = t.titleItalic?.value ? "italic" : "normal";
+        titleEl.style.textDecoration = t.titleUnderline?.value ? "underline" : "none";
+        titleEl.style.alignSelf = alignSelfFor(titleAlignVal);
+        titleEl.style.textAlign = textAlignFor(titleAlignVal);
+        if (t.titleColor?.value?.value) {
+            titleEl.style.color = this.isHighContrast ? this.colorPalette.foreground.value : t.titleColor.value.value;
+        }
+        titleEl.style.padding = "8px 10px 0";
+        // Grid layout mode sets `display:grid` directly on this.container
+        // (see barSettings.layout === "grid" in update()) — span all
+        // columns so the title renders as its own full-width row instead
+        // of being squeezed into a single grid cell alongside the bars.
+        // No-op (ignored) when layout is "list" (flex/block, not grid).
+        titleEl.style.gridColumn = "1 / -1";
+        this.container.appendChild(titleEl);
+    }
+
     /** Parse the categorical dataView into typed row objects */
     private parseData(dataView: DataView): BarRow[] {
         const categorical = dataView.categorical;
@@ -324,10 +384,47 @@ export class Visual implements IVisual {
         const categoryColor = this.isHighContrast ? hcFg : (valueSettings.categoryColor.value?.value || "#1a1a1a");
         const catFontSize = valueSettings.categoryFontSize.value > 0
             ? valueSettings.categoryFontSize.value : fontSize;
-        const valuesColor = this.isHighContrast ? hcFg : (valueSettings.valuesColor.value?.value || "#5e5d5a");
+
+        // Per-row Values/Percentage Label Colour resolution (TEXT-02 fx):
+        // reads the rule-evaluated fill (if a rule is set) via the
+        // official ColorHelper.getColorForMeasure path against this row's
+        // own per-instance object overrides, falling back to the static
+        // format-pane value otherwise.
+        const instanceObjects = this.categoricalCategories?.objects?.[rowIndex];
+        const resolvedValuesColor = this.valuesColorHelper?.getColorForMeasure(instanceObjects, "valuesColor")
+            ?? (valueSettings.valuesColor.value?.value || "#5e5d5a");
+        const valuesColor = this.isHighContrast ? hcFg : resolvedValuesColor;
         const valFontSize = valueSettings.valuesFontSize.value > 0
             ? valueSettings.valuesFontSize.value : fontSize;
         const labelColor = this.isHighContrast ? hcFg : (valueSettings.labelColor.value?.value || "#8a8985");
+        // "0 = use the pre-existing derived size" (valFontSize - 2, clamped
+        // to 9px minimum) — preserves prior behaviour exactly at default.
+        const lblFontSize = valueSettings.labelFontSize.value > 0
+            ? valueSettings.labelFontSize.value
+            : Math.max((valFontSize || fontSize) - 2, 9);
+
+        // ─── Text treatment (font family/weight/style/decoration,
+        // TEXT-01/TEXT-02) — each `?? default` fallback reproduces this
+        // visual's PRE-EXISTING hardcoded/CSS-driven style exactly when an
+        // old saved report has none of these new properties set (D-06):
+        //   category: was CSS-hardcoded font-weight 600 -> categoryBold defaults true
+        //   values/label: no font-weight was ever set (normal) -> Bold defaults false
+        const weightFor = (bold: boolean | undefined, restWeight: string): string => bold ? "700" : restWeight;
+
+        const categoryFontFamily = valueSettings.categoryFontFamily.value || "Segoe UI, Tahoma, Geneva, Verdana, sans-serif";
+        const categoryWeight = weightFor(valueSettings.categoryBold.value, "600");
+        const categoryStyle = valueSettings.categoryItalic.value ? "italic" : "normal";
+        const categoryDecoration = valueSettings.categoryUnderline.value ? "underline" : "none";
+
+        const valuesFontFamily = valueSettings.valuesFontFamily.value || "Segoe UI, Tahoma, Geneva, Verdana, sans-serif";
+        const valuesWeight = weightFor(valueSettings.valuesBold.value, "400");
+        const valuesStyle = valueSettings.valuesItalic.value ? "italic" : "normal";
+        const valuesDecoration = valueSettings.valuesUnderline.value ? "underline" : "none";
+
+        const labelFontFamily = valueSettings.labelFontFamily.value || "Segoe UI, Tahoma, Geneva, Verdana, sans-serif";
+        const labelWeight = weightFor(valueSettings.labelBold.value, "400");
+        const labelStyle = valueSettings.labelItalic.value ? "italic" : "normal";
+        const labelDecoration = valueSettings.labelUnderline.value ? "underline" : "none";
 
         // Determine bar fill colour
         const fillColor = this.isHighContrast ? hcFg : this.getBarColor(row.percentage, rowIndex);
@@ -352,12 +449,20 @@ export class Visual implements IVisual {
         categoryEl.textContent = row.category;
         categoryEl.style.color = categoryColor;
         categoryEl.style.fontSize = `${catFontSize}px`;
+        categoryEl.style.fontFamily = categoryFontFamily;
+        categoryEl.style.fontWeight = categoryWeight;
+        categoryEl.style.fontStyle = categoryStyle;
+        categoryEl.style.textDecoration = categoryDecoration;
         header.appendChild(categoryEl);
 
         const valuesEl = document.createElement("span");
         valuesEl.className = "progress-values";
         valuesEl.style.color = valuesColor;
         valuesEl.style.fontSize = `${valFontSize}px`;
+        valuesEl.style.fontFamily = valuesFontFamily;
+        valuesEl.style.fontWeight = valuesWeight;
+        valuesEl.style.fontStyle = valuesStyle;
+        valuesEl.style.textDecoration = valuesDecoration;
 
         const parts: string[] = [];
         const prefix = valueSettings.valuePrefix.value || "";
@@ -380,8 +485,12 @@ export class Visual implements IVisual {
             const labelEl = document.createElement("div");
             labelEl.className = "progress-label";
             labelEl.textContent = row.label;
-            labelEl.style.fontSize = `${Math.max((valFontSize || fontSize) - 2, 9)}px`;
+            labelEl.style.fontSize = `${lblFontSize}px`;
             labelEl.style.color = labelColor;
+            labelEl.style.fontFamily = labelFontFamily;
+            labelEl.style.fontWeight = labelWeight;
+            labelEl.style.fontStyle = labelStyle;
+            labelEl.style.textDecoration = labelDecoration;
             rowEl.appendChild(labelEl);
         }
 
