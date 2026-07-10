@@ -24,6 +24,13 @@ import { VisualFormattingSettingsModel, alignSelfFor, textAlignFor } from "./set
 import { toRgba } from "../../_shared/formatting/colorHelpers";
 import { clamp, safeNumber, CODEX_TOKENS } from "./utils";
 
+// v3 appearance engine (frozen, Plan 15) — the KPI-family v2 look.
+import { Band, Theme, band, bandColor, targetToken } from "../../_shared/formatting/bandEngine";
+import { surfaceTokens, mix, accentBarGradient, TABULAR_NUMS } from "../../_shared/formatting/designTokens";
+import { makeCornerBrackets, CardSignatureHandle } from "../../_shared/formatting/cardSignature";
+import { settle } from "../../_shared/formatting/motion";
+import { applyHighContrast, statusGlyph } from "../../_shared/formatting/highContrast";
+
 /** Parsed row data for a single progress bar */
 interface BarRow {
     category: string;
@@ -33,6 +40,29 @@ interface BarRow {
     percentage: number;
     sortOrder: number | null;
     selectionId: ISelectionId | null;
+}
+
+// v2 board look (Codex Progress Bar Card v2.dc.html): the track scale runs
+// to 120% so the shared violet target token sits IN-track (never at the
+// edge), and value past target physically crosses it, brightening as it
+// goes. TICK_PCT is the fixed left-offset (as a % of track width) at which
+// "100% of target" sits — the SAME position on every row, because each
+// row's own value is normalised against its OWN target.
+const SCALE = 120;
+const TICK_PCT = (100 / SCALE) * 100; // 83.33%
+const QUANTISED_BLOCKS = 24;
+const GRID_TEMPLATE = "90px 1fr 96px";
+
+/** Luminance-based theme pick (matches the pbiKpiCard v3 pilot's own
+ * 0.55 threshold convention) — used only when the container's own
+ * background is actually visible (not fully transparent). */
+function themeFor(hex: string, visible: boolean): Theme {
+    if (!visible) return "dark";
+    const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})/i.exec(hex || "");
+    if (!m) return "dark";
+    const r = parseInt(m[1], 16), g = parseInt(m[2], 16), b = parseInt(m[3], 16);
+    const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+    return luminance > 0.55 ? "light" : "dark";
 }
 
 export class Visual implements IVisual {
@@ -56,6 +86,16 @@ export class Visual implements IVisual {
     // fx (TEXT-02) state — Values/percentage label colour
     private valuesColorHelper: ColorHelper | null = null;
 
+    // v3 card signature — one corner-bracket pair for the whole card
+    // (the board tints it with the brand cyan accent, not a per-row band —
+    // §4/§2: the target token and the accent token are distinct signals).
+    private cornerSignature: CardSignatureHandle | null = null;
+
+    // v3 motion — only re-settles a row's value text when it changes,
+    // tracked per category so a full-rebuild render (this.container is
+    // cleared and rebuilt every update()) doesn't replay every row.
+    private lastPctByCategory: Map<string, string> = new Map();
+
     constructor(options: VisualConstructorOptions) {
         this.formattingSettingsService = new FormattingSettingsService();
         this.target = options.element;
@@ -75,7 +115,16 @@ export class Visual implements IVisual {
         // Create scrollable container
         this.container = document.createElement("div");
         this.container.className = "progress-bar-card-container";
+        this.container.style.position = "relative";
         this.target.appendChild(this.container);
+
+        // Corner-bracket card signature — accent-tinted (not band-tinted;
+        // the accent cyan is the card's own identity, distinct from any
+        // row's status band), appended last so it paints above everything.
+        this.cornerSignature = makeCornerBrackets(this.container, "#00d9ff", {
+            variant: "cornerBracket",
+            mirror: true,
+        });
     }
 
     public update(options: VisualUpdateOptions): void {
@@ -112,7 +161,29 @@ export class Visual implements IVisual {
                 ? ""
                 : toRgba(bgHex, bgTransparencyPct);
 
+            // Theme pick for the v3 token set — only trusts bgHex as a real
+            // signal when the container background is actually visible
+            // (transparency < 100); otherwise defaults dark (matches the
+            // board's primary dark-canvas showcase, and this visual has no
+            // opaque background by default — see the constructor override note
+            // in settings.ts).
+            const theme: Theme = themeFor(bgHex, bgTransparencyPct < 100);
+            const hc = applyHighContrast(this.colorPalette, { fallbackColor: "#00d9ff" });
+
+            // Corner-bracket re-tint each update (created once in the constructor).
+            this.cornerSignature?.update(hc.active ? hc.color : "#00d9ff", {
+                variant: "cornerBracket",
+                mirror: true,
+                glowMix: hc.active ? 0 : (theme === "dark" ? 55 : 0),
+                muted: false,
+            });
+
             while (this.container.firstChild) this.container.removeChild(this.container.firstChild);
+            // NOTE: the corner-bracket elements are re-appended at the very
+            // end of this method (after title/rows/axis/axis-titles-wrap),
+            // never here — makeCornerBrackets' own contract is "append
+            // last so it paints above everything" (cardSignature.ts), and
+            // clearing the container above detaches them from the DOM.
 
             // ─── Visual Title (iframe-internal, Policy 1180.2.5) ───────
             // Painted on the outer container layer only (T-06-01, matching
@@ -180,6 +251,7 @@ export class Visual implements IVisual {
 
             const barSettings = this.formattingSettings.barSettingsCard;
             const layout = barSettings.layout.value?.value || "list";
+            const quantised = !!barSettings.quantisedMode?.value;
 
             // Set layout class
             this.container.className = layout === "grid"
@@ -195,8 +267,39 @@ export class Visual implements IVisual {
                 this.container.style.gridTemplateColumns = "";
             }
 
+            // ─── v2 header row (list layout only): "Segment" / "Actual /
+            // target" captions above the row list, matching the board's
+            // .prow.phead — the design's own "axis + titles" ask. Skipped
+            // in grid layout, which has no equivalent in the design board
+            // (each row is already its own mini-card there).
+            if (layout === "list") {
+                this.container.appendChild(this.renderHeaderRow(theme, hc.active ? hc.color : null));
+            }
+
+            // ─── Row list, with a shared position:relative wrapper so the
+            // v2 vertical gridlines overlay (list layout only) can sit
+            // BEHIND every row's (opaque) track. ─────────────────────────
+            const rowsWrap = document.createElement("div");
+            rowsWrap.style.position = "relative";
+            if (layout === "grid") {
+                rowsWrap.style.display = "contents";
+            }
+
+            if (layout === "list") {
+                rowsWrap.appendChild(this.renderGridlines(theme));
+            }
+
             for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
-                this.renderRow(rows[rowIndex], rowIndex);
+                rowsWrap.appendChild(this.renderRow(rows[rowIndex], rowIndex, theme, hc, quantised));
+            }
+            this.container.appendChild(rowsWrap);
+
+            // ─── v2 numeric axis (list layout only): tick labels + "% of
+            // target" caption under the row list, aligned to the same
+            // 90px/1fr/96px column grid as every row. ───────────────────
+            if (layout === "list") {
+                this.container.appendChild(this.renderAxisRow(theme));
+                this.container.appendChild(this.renderAxisCaption(theme, hc.active ? hc.color : null));
             }
 
             // Axis titles
@@ -259,6 +362,11 @@ export class Visual implements IVisual {
                 }
             }
 
+            // Corner-bracket card signature — appended LAST, after title/
+            // header/rows/axis/axis-titles-wrap, so it always paints above
+            // (cardSignature.ts contract).
+            this.cornerSignature?.elements.forEach((el) => this.container.appendChild(el));
+
             this.events.renderingFinished(options);
         } catch (e) {
             this.events.renderingFailed(options, String(e));
@@ -296,6 +404,113 @@ export class Visual implements IVisual {
         // No-op (ignored) when layout is "list" (flex/block, not grid).
         titleEl.style.gridColumn = "1 / -1";
         this.container.appendChild(titleEl);
+    }
+
+    /** v2 header row (list layout): "Segment" / "Actual / target" captions,
+     *  aligned to the same 90px/1fr/96px grid as every row (board's
+     *  .prow.phead). Text colour follows the muted token, HC-routed. */
+    private renderHeaderRow(theme: Theme, hcColor: string | null): HTMLElement {
+        const row = document.createElement("div");
+        row.className = "pbc-phead";
+        row.style.display = "grid";
+        row.style.gridTemplateColumns = GRID_TEMPLATE;
+        row.style.gap = "14px";
+        row.style.alignItems = "end";
+        row.style.marginBottom = "10px";
+
+        const muted = hcColor || surfaceTokens(theme).muted;
+
+        const segLabel = document.createElement("span");
+        segLabel.textContent = "Segment";
+        segLabel.style.fontSize = "10px";
+        segLabel.style.fontWeight = "700";
+        segLabel.style.letterSpacing = "0.12em";
+        segLabel.style.textTransform = "uppercase";
+        segLabel.style.color = muted;
+        segLabel.style.opacity = "0.85";
+        segLabel.style.textAlign = "right";
+        row.appendChild(segLabel);
+
+        row.appendChild(document.createElement("span"));
+
+        const valLabel = document.createElement("span");
+        valLabel.textContent = "Actual / target";
+        valLabel.style.fontSize = "10px";
+        valLabel.style.fontWeight = "700";
+        valLabel.style.letterSpacing = "0.12em";
+        valLabel.style.textTransform = "uppercase";
+        valLabel.style.color = muted;
+        valLabel.style.opacity = "0.85";
+        valLabel.style.textAlign = "right";
+        row.appendChild(valLabel);
+
+        return row;
+    }
+
+    /** v2 vertical gridlines (list layout): faint lines at each 20%-of-
+     *  target tick, spanning the row list's track column only. Appended
+     *  BEHIND the row elements so each row's own (opaque) track paints
+     *  over the segment where a bar sits — the gridline only reads in the
+     *  gaps, matching the board. */
+    private renderGridlines(theme: Theme): HTMLElement {
+        const overlay = document.createElement("div");
+        overlay.style.position = "absolute";
+        overlay.style.left = "104px"; // 90px label col + 14px gap
+        overlay.style.right = "110px"; // 96px value col + 14px gap
+        overlay.style.top = "0";
+        overlay.style.bottom = "0";
+        overlay.style.pointerEvents = "none";
+
+        const border = surfaceTokens(theme).border;
+        for (let v = 0; v <= SCALE; v += 20) {
+            const line = document.createElement("div");
+            line.style.position = "absolute";
+            line.style.top = "0";
+            line.style.bottom = "0";
+            line.style.left = `${(v / SCALE) * 100}%`;
+            line.style.width = "1px";
+            line.style.background = border;
+            line.style.opacity = "0.7";
+            overlay.appendChild(line);
+        }
+        return overlay;
+    }
+
+    /** v2 numeric axis row (list layout): tick labels 0/20/40/.../120,
+     *  aligned to the same column grid as the gridlines above. */
+    private renderAxisRow(theme: Theme): HTMLElement {
+        const row = document.createElement("div");
+        row.style.position = "relative";
+        row.style.margin = "8px 110px 0 104px";
+        row.style.height = "16px";
+
+        const muted = surfaceTokens(theme).muted;
+        for (let v = 0; v <= SCALE; v += 20) {
+            const label = document.createElement("span");
+            label.textContent = String(v);
+            label.style.position = "absolute";
+            label.style.left = `${(v / SCALE) * 100}%`;
+            label.style.transform = "translateX(-50%)";
+            label.style.fontSize = "10.5px";
+            label.style.fontWeight = "600";
+            label.style.color = muted;
+            label.style.fontFeatureSettings = TABULAR_NUMS;
+            row.appendChild(label);
+        }
+        return row;
+    }
+
+    /** v2 axis caption ("% of target"), HC-routed. */
+    private renderAxisCaption(theme: Theme, hcColor: string | null): HTMLElement {
+        const cap = document.createElement("div");
+        cap.textContent = "% OF TARGET";
+        cap.style.textAlign = "center";
+        cap.style.margin = "2px 110px 0 104px";
+        cap.style.fontSize = "10.5px";
+        cap.style.fontWeight = "700";
+        cap.style.letterSpacing = "0.1em";
+        cap.style.color = hcColor || surfaceTokens(theme).muted;
+        return cap;
     }
 
     /** Parse the categorical dataView into typed row objects */
@@ -362,8 +577,17 @@ export class Visual implements IVisual {
         return rows;
     }
 
-    /** Render a single progress bar row */
-    private renderRow(row: BarRow, rowIndex: number): void {
+    /** Render a single progress bar row — v2 board look: 90px label /
+     *  1fr track (120%-scaled, violet target-in-track tick, brightening
+     *  overflow, optional quantised LED blocks) / 96px band-tinted value
+     *  + muted actual/target sub-value. */
+    private renderRow(
+        row: BarRow,
+        rowIndex: number,
+        theme: Theme,
+        hc: ReturnType<typeof applyHighContrast>,
+        quantised: boolean
+    ): HTMLElement {
         const barSettings = this.formattingSettings.barSettingsCard;
         const zoneSettings = this.formattingSettings.zoneSettingsCard;
         const valueSettings = this.formattingSettings.valueSettingsCard;
@@ -373,42 +597,31 @@ export class Visual implements IVisual {
         const rowHeight = barSettings.rowHeight.value ?? 48;
         const fontSize = valueSettings.fontSize.value ?? 12;
 
-        // High contrast overrides
+        // High contrast overrides (pre-existing convention, unchanged)
         const hcFg = this.isHighContrast ? this.colorPalette.foreground.value : null;
         const hcBg = this.isHighContrast ? this.colorPalette.background.value : null;
 
+        // trackColor/rowBackground semantics are NOT disturbed by the v2
+        // look (established constraint) — same resolution as before.
         const trackColor = this.isHighContrast ? hcBg : (barSettings.trackColor.value?.value || "#eee9dc");
         const rowBg = this.isHighContrast ? hcBg : (barSettings.rowBackground.value?.value || "");
 
-        // Text settings
+        // Text settings (unchanged resolution)
         const categoryColor = this.isHighContrast ? hcFg : (valueSettings.categoryColor.value?.value || "#1a1a1a");
         const catFontSize = valueSettings.categoryFontSize.value > 0
             ? valueSettings.categoryFontSize.value : fontSize;
 
-        // Per-row Values/Percentage Label Colour resolution (TEXT-02 fx):
-        // reads the rule-evaluated fill (if a rule is set) via the
-        // official ColorHelper.getColorForMeasure path against this row's
-        // own per-instance object overrides, falling back to the static
-        // format-pane value otherwise.
         const instanceObjects = this.categoricalCategories?.objects?.[rowIndex];
         const resolvedValuesColor = this.valuesColorHelper?.getColorForMeasure(instanceObjects, "valuesColor")
             ?? (valueSettings.valuesColor.value?.value || "#5e5d5a");
-        const valuesColor = this.isHighContrast ? hcFg : resolvedValuesColor;
+        const subValueColor = this.isHighContrast ? hcFg : resolvedValuesColor;
         const valFontSize = valueSettings.valuesFontSize.value > 0
             ? valueSettings.valuesFontSize.value : fontSize;
         const labelColor = this.isHighContrast ? hcFg : (valueSettings.labelColor.value?.value || "#8a8985");
-        // "0 = use the pre-existing derived size" (valFontSize - 2, clamped
-        // to 9px minimum) — preserves prior behaviour exactly at default.
         const lblFontSize = valueSettings.labelFontSize.value > 0
             ? valueSettings.labelFontSize.value
             : Math.max((valFontSize || fontSize) - 2, 9);
 
-        // ─── Text treatment (font family/weight/style/decoration,
-        // TEXT-01/TEXT-02) — each `?? default` fallback reproduces this
-        // visual's PRE-EXISTING hardcoded/CSS-driven style exactly when an
-        // old saved report has none of these new properties set (D-06):
-        //   category: was CSS-hardcoded font-weight 600 -> categoryBold defaults true
-        //   values/label: no font-weight was ever set (normal) -> Bold defaults false
         const weightFor = (bold: boolean | undefined, restWeight: string): string => bold ? "700" : restWeight;
 
         const categoryFontFamily = valueSettings.categoryFontFamily.value || "Segoe UI, Tahoma, Geneva, Verdana, sans-serif";
@@ -417,7 +630,7 @@ export class Visual implements IVisual {
         const categoryDecoration = valueSettings.categoryUnderline.value ? "underline" : "none";
 
         const valuesFontFamily = valueSettings.valuesFontFamily.value || "Segoe UI, Tahoma, Geneva, Verdana, sans-serif";
-        const valuesWeight = weightFor(valueSettings.valuesBold.value, "400");
+        const valuesWeight = weightFor(valueSettings.valuesBold.value, "700");
         const valuesStyle = valueSettings.valuesItalic.value ? "italic" : "normal";
         const valuesDecoration = valueSettings.valuesUnderline.value ? "underline" : "none";
 
@@ -426,12 +639,53 @@ export class Visual implements IVisual {
         const labelStyle = valueSettings.labelItalic.value ? "italic" : "normal";
         const labelDecoration = valueSettings.labelUnderline.value ? "underline" : "none";
 
-        // Determine bar fill colour
-        const fillColor = this.isHighContrast ? hcFg : this.getBarColor(row.percentage, rowIndex);
+        // ─── v3 band engine: ONE colour token for the fill/tick/value ──
+        // "Fixed" colour mode keeps its own literal override untouched
+        // (existing TRANS-04 fx wiring, unchanged semantics — no band
+        // applies). "Zoned" mode's fill/value colour now routes through
+        // the shared band(value,target) ratio law (>=100% success, >=90%
+        // warning, else danger) — matching every other v2 visual and the
+        // board's own note ("thresholds: >=100% green, >=90% amber, below
+        // red — all fx-overridable") — resolved against the EXISTING
+        // safeColor/warningColor/dangerColor pickers so a user's custom
+        // colours still resolve (D-16). The legacy safeMax/warningMax
+        // percentage-of-max thresholds are superseded by this shared
+        // ratio law under the v2 default (documented deviation — see
+        // Summary "Deviations"); they remain in the format pane but are no
+        // longer read by this render path.
+        const colorMode = zoneSettings.colorMode.value?.value || "zoned";
+        let rowBand: Band | null = null;
+        let signalHex: string;
+        if (colorMode === "fixed") {
+            const fixedColorDefault = zoneSettings.fixedColor.value?.value || CODEX_TOKENS.primary;
+            signalHex = this.fixedColorHelper?.getColorForMeasure(instanceObjects, "fixedColor") ?? fixedColorDefault;
+        } else {
+            rowBand = band(row.currentValue, row.maxValue);
+            const colorFor: Record<Band, { value?: { value?: string } }> = {
+                success: zoneSettings.safeColor,
+                warning: zoneSettings.warningColor,
+                danger: zoneSettings.dangerColor,
+            };
+            const fallback: Record<Band, string> = {
+                success: CODEX_TOKENS.success, warning: CODEX_TOKENS.warning, danger: CODEX_TOKENS.danger,
+            };
+            signalHex = colorFor[rowBand].value?.value || fallback[rowBand];
+        }
+        const glowMix = hc.active ? 0 : (theme === "dark" ? 50 : 0);
 
-        // Row container
+        // ─── 120%-scale target-in-track geometry ───────────────────────
+        const rawPct = (row.currentValue / row.maxValue) * 100;
+        const hasOver = rawPct > 100;
+        const wBase = (Math.min(rawPct, 100) / SCALE) * 100;
+        const wOver = hasOver ? ((Math.min(rawPct, SCALE) - 100) / SCALE) * 100 : 0;
+
+        // Row container: label / track / value, 90px/1fr/96px grid
+        // (board's .prow), plus the optional subtitle label below.
         const rowEl = document.createElement("div");
         rowEl.className = "progress-row";
+        rowEl.style.display = "flex";
+        rowEl.style.flexDirection = "column";
+        rowEl.style.gap = "3px";
         rowEl.style.minHeight = `${rowHeight}px`;
         rowEl.style.fontSize = `${fontSize}px`;
         if (rowBg && rowBg.length > 0) {
@@ -440,10 +694,13 @@ export class Visual implements IVisual {
             rowEl.style.borderRadius = "6px";
         }
 
-        // Header line: category + values
-        const header = document.createElement("div");
-        header.className = "progress-row-header";
+        const grid = document.createElement("div");
+        grid.style.display = "grid";
+        grid.style.gridTemplateColumns = GRID_TEMPLATE;
+        grid.style.gap = "14px";
+        grid.style.alignItems = "center";
 
+        // Category label (right-aligned, matching the board's .plab)
         const categoryEl = document.createElement("span");
         categoryEl.className = "progress-category";
         categoryEl.textContent = row.category;
@@ -453,34 +710,158 @@ export class Visual implements IVisual {
         categoryEl.style.fontWeight = categoryWeight;
         categoryEl.style.fontStyle = categoryStyle;
         categoryEl.style.textDecoration = categoryDecoration;
-        header.appendChild(categoryEl);
+        categoryEl.style.textAlign = "right";
+        categoryEl.style.whiteSpace = "nowrap";
+        categoryEl.style.overflow = "hidden";
+        categoryEl.style.textOverflow = "ellipsis";
+        grid.appendChild(categoryEl);
 
-        const valuesEl = document.createElement("span");
-        valuesEl.className = "progress-values";
-        valuesEl.style.color = valuesColor;
-        valuesEl.style.fontSize = `${valFontSize}px`;
-        valuesEl.style.fontFamily = valuesFontFamily;
-        valuesEl.style.fontWeight = valuesWeight;
-        valuesEl.style.fontStyle = valuesStyle;
-        valuesEl.style.textDecoration = valuesDecoration;
+        // Track: fill/blocks + overflow highlight + violet target tick
+        const track = document.createElement("div");
+        track.className = "progress-track";
+        track.style.position = "relative";
+        track.style.height = `${barHeight}px`;
+        track.style.borderRadius = `${barRadius}px`;
+        track.style.background = quantised ? "none" : trackColor;
+        if (hc.active) {
+            track.style.border = `${hc.borderWidth}px solid ${hc.color}`;
+        }
 
-        const parts: string[] = [];
-        const prefix = valueSettings.valuePrefix.value || "";
-        const unit = valueSettings.valueUnit.value || "";
+        if (quantised) {
+            const blocksEl = document.createElement("div");
+            blocksEl.style.position = "absolute";
+            blocksEl.style.left = "0";
+            blocksEl.style.right = "0";
+            blocksEl.style.top = "0";
+            blocksEl.style.bottom = "0";
+            blocksEl.style.display = "flex";
+            blocksEl.style.gap = "3px";
+            for (let i = 0; i < QUANTISED_BLOCKS; i++) {
+                const pos = ((i + 0.5) / QUANTISED_BLOCKS) * SCALE;
+                const on = pos <= rawPct;
+                const over = on && pos > 100;
+                const block = document.createElement("span");
+                block.style.flex = "1";
+                block.style.borderRadius = "2px";
+                if (!on) {
+                    block.style.background = hc.active ? "transparent" : trackColor;
+                    block.style.border = hc.active ? `1px solid ${hc.color}` : "none";
+                } else if (hc.active) {
+                    block.style.background = hc.color;
+                } else if (over) {
+                    block.style.background = mix(signalHex, "#ffffff", 0.45);
+                    block.style.boxShadow = glowMix > 0
+                        ? `0 0 8px color-mix(in srgb, ${signalHex} 70%, transparent)` : "none";
+                } else {
+                    block.style.background = signalHex;
+                    block.style.boxShadow = glowMix > 0
+                        ? `0 0 5px color-mix(in srgb, ${signalHex} ${glowMix}%, transparent)` : "none";
+                }
+                blocksEl.appendChild(block);
+            }
+            track.appendChild(blocksEl);
+        } else {
+            const fill = document.createElement("div");
+            fill.className = "progress-fill";
+            fill.style.position = "absolute";
+            fill.style.left = "0";
+            fill.style.top = "0";
+            fill.style.bottom = "0";
+            fill.style.width = `${wBase}%`;
+            fill.style.borderRadius = `${barRadius}px`;
+            fill.style.minWidth = wBase > 0 ? "2px" : "0";
+            if (hc.active) {
+                fill.style.background = hc.color;
+            } else {
+                fill.style.background = accentBarGradient(signalHex);
+                fill.style.boxShadow = glowMix > 0
+                    ? `0 0 8px color-mix(in srgb, ${signalHex} ${glowMix}%, transparent)` : "none";
+            }
+            track.appendChild(fill);
+
+            if (hasOver) {
+                const over = document.createElement("div");
+                over.style.position = "absolute";
+                over.style.left = `${TICK_PCT}%`;
+                over.style.top = "0";
+                over.style.bottom = "0";
+                over.style.width = `${wOver}%`;
+                over.style.borderRadius = `0 ${barRadius}px ${barRadius}px 0`;
+                if (hc.active) {
+                    over.style.background = hc.color;
+                } else {
+                    over.style.background = `linear-gradient(180deg, #ffffff, ${mix(signalHex, "#ffffff", 0.4)} 60%, ${signalHex})`;
+                    over.style.boxShadow = `0 0 12px color-mix(in srgb, ${signalHex} 75%, transparent)`;
+                }
+                track.appendChild(over);
+            }
+        }
+
+        // Violet target tick — NEVER a band colour (bandEngine.ts contract).
+        const tick = document.createElement("div");
+        tick.style.position = "absolute";
+        tick.style.left = `${TICK_PCT}%`;
+        tick.style.top = "-5px";
+        tick.style.bottom = "-5px";
+        tick.style.width = "3px";
+        tick.style.borderRadius = "2px";
+        tick.style.background = hc.active ? hc.color : targetToken(theme);
+        if (!hc.active && glowMix > 0) {
+            tick.style.boxShadow = `0 0 6px color-mix(in srgb, ${targetToken(theme)} ${glowMix}%, transparent)`;
+        }
+        track.appendChild(tick);
+        grid.appendChild(track);
+
+        // Value wrap: band-tinted percentage + muted actual/target sub-value
+        const valueWrap = document.createElement("div");
+        valueWrap.style.textAlign = "right";
+
+        const pctText = `${Math.round(clamp(rawPct, 0, 999))}%`;
+        if (valueSettings.showPercentage.value) {
+            const pv = document.createElement("div");
+            pv.style.fontSize = `${valFontSize}px`;
+            pv.style.fontFamily = valuesFontFamily;
+            pv.style.fontWeight = valuesWeight;
+            pv.style.fontStyle = valuesStyle;
+            pv.style.textDecoration = valuesDecoration;
+            pv.style.fontFeatureSettings = TABULAR_NUMS;
+            pv.style.lineHeight = "1.2";
+            pv.style.color = hc.active ? hc.color : signalHex;
+            const glyph = hc.active && rowBand ? `${statusGlyph(rowBand)} ` : "";
+            pv.textContent = glyph + pctText;
+            valueWrap.appendChild(pv);
+
+            // v3 motion: settle the percentage once when its displayed
+            // text changes for this category (skipped under
+            // prefers-reduced-motion — see motion.ts).
+            const lastPct = this.lastPctByCategory.get(row.category);
+            if (lastPct !== pctText) {
+                settle(pv, [
+                    { opacity: 0.35, transform: "translateY(2px)" },
+                    { opacity: 1, transform: "translateY(0)" },
+                ], { duration: 200 });
+                this.lastPctByCategory.set(row.category, pctText);
+            }
+        }
 
         if (valueSettings.showValues.value) {
+            const prefix = valueSettings.valuePrefix.value || "";
+            const unit = valueSettings.valueUnit.value || "";
             const unitSuffix = unit ? ` ${unit}` : "";
-            parts.push(`${prefix}${this.formatNum(row.currentValue)} / ${prefix}${this.formatNum(row.maxValue)}${unitSuffix}`);
+            const sub = document.createElement("div");
+            sub.style.fontSize = `${lblFontSize}px`;
+            sub.style.color = subValueColor;
+            sub.style.fontFeatureSettings = TABULAR_NUMS;
+            sub.textContent = `${prefix}${this.formatNum(row.currentValue)} / ${prefix}${this.formatNum(row.maxValue)}${unitSuffix}`;
+            valueWrap.appendChild(sub);
         }
-        if (valueSettings.showPercentage.value) {
-            parts.push(`${Math.round(row.percentage)}%`);
-        }
+        grid.appendChild(valueWrap);
 
-        valuesEl.textContent = parts.join("  ");
-        header.appendChild(valuesEl);
-        rowEl.appendChild(header);
+        rowEl.appendChild(grid);
 
-        // Optional label subtitle
+        // Optional label subtitle (pre-existing "label" data role — not
+        // part of the v2 board grammar, kept unchanged below the row so a
+        // saved report bound to it still shows the text/colour/font).
         if (row.label) {
             const labelEl = document.createElement("div");
             labelEl.className = "progress-label";
@@ -494,24 +875,6 @@ export class Visual implements IVisual {
             rowEl.appendChild(labelEl);
         }
 
-        // Track bar
-        const track = document.createElement("div");
-        track.className = "progress-track";
-        track.style.height = `${barHeight}px`;
-        track.style.borderRadius = `${barRadius}px`;
-        track.style.backgroundColor = trackColor;
-
-        // Fill bar
-        const fill = document.createElement("div");
-        fill.className = "progress-fill";
-        fill.style.width = `${row.percentage}%`;
-        fill.style.height = `${barHeight}px`;
-        fill.style.borderRadius = `${barRadius}px`;
-        fill.style.backgroundColor = fillColor;
-
-        track.appendChild(fill);
-        rowEl.appendChild(track);
-
         // Tooltip on hover
         rowEl.style.cursor = "pointer";
         rowEl.addEventListener("mousemove", (e: MouseEvent) => {
@@ -519,7 +882,7 @@ export class Visual implements IVisual {
                 { displayName: "Category", value: row.category },
                 { displayName: "Current", value: this.formatNum(row.currentValue) },
                 { displayName: "Max", value: this.formatNum(row.maxValue) },
-                { displayName: "Progress", value: Math.round(row.percentage) + "%" }
+                { displayName: "Progress", value: pctText }
             ];
             if (row.label) {
                 tooltipItems.push({ displayName: "Label", value: row.label });
@@ -543,35 +906,7 @@ export class Visual implements IVisual {
             e.stopPropagation();
         });
 
-        this.container.appendChild(rowEl);
-    }
-
-    /** Get bar colour based on zone settings and percentage */
-    private getBarColor(percentage: number, rowIndex: number): string {
-        const zoneSettings = this.formattingSettings.zoneSettingsCard;
-        const colorMode = zoneSettings.colorMode.value?.value || "zoned";
-
-        if (colorMode === "fixed") {
-            // Per-row Fixed Colour resolution (TRANS-04 fx): reads the
-            // rule-evaluated fill (if a rule is set) via the official
-            // ColorHelper.getColorForMeasure path against this row's own
-            // per-instance object overrides, falling back to the static
-            // format-pane value otherwise.
-            const fixedColorDefault = zoneSettings.fixedColor.value?.value || CODEX_TOKENS.primary;
-            const instanceObjects = this.categoricalCategories?.objects?.[rowIndex];
-            return this.fixedColorHelper?.getColorForMeasure(instanceObjects, "fixedColor") ?? fixedColorDefault;
-        }
-
-        // Zoned mode — low fill = danger, high fill = safe
-        const dangerMax = zoneSettings.warningMax.value ?? 25;
-        const warningMax = zoneSettings.safeMax.value ?? 60;
-        const safeColor = zoneSettings.safeColor.value?.value || CODEX_TOKENS.success;
-        const warningColor = zoneSettings.warningColor.value?.value || CODEX_TOKENS.warning;
-        const dangerColor = zoneSettings.dangerColor.value?.value || CODEX_TOKENS.danger;
-
-        if (percentage < dangerMax) return dangerColor;
-        if (percentage < warningMax) return warningColor;
-        return safeColor;
+        return rowEl;
     }
 
     /** Format a number for display (no decimals if whole, 1 decimal otherwise) */
@@ -587,7 +922,7 @@ export class Visual implements IVisual {
 
         const iconEl = document.createElement("div");
         iconEl.className = "progress-empty-icon";
-        iconEl.textContent = "\u2630";
+        iconEl.textContent = "☰";
         empty.appendChild(iconEl);
 
         const textEl = document.createElement("div");
@@ -613,9 +948,13 @@ export class Visual implements IVisual {
         }
 
         this.container.appendChild(empty);
+        this.cornerSignature?.update("#00d9ff", { variant: "cornerBracket", mirror: true, muted: true });
+        this.cornerSignature?.elements.forEach((el) => this.container.appendChild(el));
     }
 
     public destroy(): void {
+        this.cornerSignature?.destroy();
+        this.cornerSignature = null;
         while (this.container && this.container.firstChild) {
             this.container.removeChild(this.container.firstChild);
         }

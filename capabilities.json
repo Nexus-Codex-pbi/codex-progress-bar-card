@@ -86,6 +86,12 @@
             }
           },
           "displayName": "Row Background"
+        },
+        "quantisedMode": {
+          "type": {
+            "bool": true
+          },
+          "displayName": "Quantised (LED) Mode"
         }
       },
       "displayName": "Bar Settings"

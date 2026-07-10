@@ -95,7 +95,12 @@
 .progress-track {
     position: relative;
     width: 100%;
-    overflow: hidden;
+    /* v2 board look (Plan 16): the violet target tick intentionally
+       extends a few px above/below the track bounds (board's .ptick) —
+       `overflow: hidden` would clip it, so this stays visible. The fill/
+       overflow-highlight/quantised-block children are already radius-
+       clipped individually and never exceed the track's own width. */
+    overflow: visible;
     flex-shrink: 0;
 }
 

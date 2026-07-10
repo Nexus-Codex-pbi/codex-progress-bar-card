@@ -71,6 +71,19 @@ class BarSettingsCard extends FormattingSettingsCard {
         instanceKind: ConstantOrRule
     });
 
+    // v2 board look (Plan 16): optional quantised LED-block track render
+    // (discrete segments, brightening past the target tick) as an
+    // alternative to the default solid gradient fill. Defaults OFF/false —
+    // the board presents both as equally-valid options side by side, not
+    // one as canonical, so this ships as a genuinely optional toggle
+    // rather than a forced new default (bounded, documented choice).
+    quantisedMode = new formattingSettings.ToggleSwitch({
+        name: "quantisedMode",
+        displayName: "Quantised (LED) Mode",
+        description: "Render the track as discrete LED-style blocks instead of a solid fill",
+        value: false
+    });
+
     name: string = "barSettings";
     displayName: string = "Bar Settings";
     slices: Array<FormattingSettingsSlice> = [
@@ -79,7 +92,8 @@ class BarSettingsCard extends FormattingSettingsCard {
         this.trackColor,
         this.layout,
         this.rowHeight,
-        this.rowBackground
+        this.rowBackground,
+        this.quantisedMode
     ];
 }
 
@@ -106,6 +120,14 @@ class ZoneSettingsCard extends FormattingSettingsCard {
         instanceKind: ConstantOrRule
     });
 
+    // v2 board look (Plan 16): "Zoned" mode's colour selection now routes
+    // through the shared band(value,target) ratio law (>=100% success,
+    // >=90% warning, else danger — see bandEngine.ts) rather than these
+    // percentage-of-max thresholds, so every v2 visual reads the same
+    // "on/near/below target" language. safeMax/warningMax remain in the
+    // format pane (zero schema churn) but are no longer read by the v2
+    // render path — safeColor/warningColor/dangerColor below ARE still
+    // fully honoured (D-16), only the threshold VALUES are superseded.
     safeMax = new formattingSettings.NumUpDown({
         name: "safeMax",
         displayName: "Warning → Safe (%)",

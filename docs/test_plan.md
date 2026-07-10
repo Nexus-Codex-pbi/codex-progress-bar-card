@@ -75,3 +75,31 @@
 
 ## 12. Render-Nothing Defaults (D-06)
 - [ ] Old saved report with none of the new title/font/alignment properties set renders pixel-identical to pre-upgrade: no title, category label at weight 600, values/label text at normal weight, subtitle at the derived Values Font Size − 2 size, all at prior default colours
+
+## 13. v2 Board Look — 120% Scale Target-in-Track (LOOK-02, Phase 1 Plan 16)
+- [ ] List layout: each row's track scale runs to 120% of target — the violet target tick sits visibly INSIDE the track (not at the right edge)
+- [ ] A row at exactly 100% of target: bar fill reaches exactly the violet tick, no overflow segment
+- [ ] A row above 100% of target (e.g. Enterprise 1.71/1.50): the fill crosses the tick and the overflow segment (past the tick) visibly brightens toward white, with a stronger glow
+- [ ] A row far above 120% of target: bar visually fills the whole track (clipped), overflow segment still brightens — no bar rendering beyond the track bounds
+- [ ] The violet target tick colour never changes with band/zone colour (bandEngine.ts contract: target token is never a band colour)
+
+## 14. v2 Board Look — Quantised (LED) Mode (LOOK-02)
+- [ ] Bar Settings → Quantised (LED) Mode toggle appears in the format pane, default OFF
+- [ ] OFF (default): track renders the solid 3-stop gradient fill (matches Task 16 "solid" board example)
+- [ ] ON: track renders as 24 discrete rounded blocks with 3px gaps; blocks past the target tick render brighter (overflow treatment) than blocks before it
+- [ ] Toggling the mode live-updates all rows without a report reload
+
+## 15. v2 Board Look — Zoned Colour Law + Fixed Mode (LOOK-02, D-16)
+- [ ] Zone Settings → Colour Mode "Zoned" (default): a row's fill/percentage colour is now driven by value/target ratio (>=100% → Safe Colour, >=90% → Warning Colour, else → Danger Colour) — matches every other v2 visual's shared band(value,target) law
+- [ ] Changing Safe/Warning/Danger Colour swatches (user override) is honoured immediately — the NEW colours appear at the new ratio thresholds (D-16: colour properties still resolve)
+- [ ] Colour Mode "Fixed": row fill/percentage colour is the single Fixed Colour swatch (or its fx rule result) regardless of value/target ratio — unchanged from pre-v2 behaviour
+- [ ] Legacy Warning→Safe (%) / Danger→Warning (%) NumUpDown fields remain visible in the format pane but no longer affect the v2 render path (documented, bounded deviation — see Summary)
+
+## 16. v2 Board Look — Corner Brackets, Axis, Header, Motion, HC (LOOK-02)
+- [ ] List layout: cyan corner-bracket signature appears at top-left/bottom-right of the whole card, painted above the title and all row content
+- [ ] List layout: "Segment" / "Actual / target" header captions appear above the row list, aligned to the same column grid as every row
+- [ ] List layout: faint vertical gridlines at each 20%-of-target increment appear behind the row tracks (visible only in the gaps between rows), with tick labels (0-120) and a "% OF TARGET" caption below the list
+- [ ] Grid layout: header/gridlines/axis are intentionally omitted (no equivalent in the v2 board for per-row mini-cards); band-tint/target-tick/overflow/quantised treatment still applies to each row's track
+- [ ] Percentage value settles (fades/slides in) once when a row's percentage changes; a report with `prefers-reduced-motion` set shows the value with no animation
+- [ ] High contrast mode: corner brackets, fill/blocks, overflow segment, and target tick all render as flat system-foreground colour with a border/outline (no gradient, no glow); the percentage value is prefixed with a status glyph (✓/!/✕) so the band is not colour-only
+- [ ] D-16: every existing colour/fx/text property (Track Colour, Row Background, Category/Values/Label font+colour, Value Prefix/Unit, Show Percentage/Values) still resolves exactly as configured, layered under the new v2 chrome
