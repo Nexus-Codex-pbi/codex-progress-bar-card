@@ -28,6 +28,7 @@ import { clamp, safeNumber, CODEX_TOKENS } from "./utils";
 import { Band, Theme, band, bandColor, targetToken } from "./shared/bandEngine";
 import { surfaceTokens, mix, accentBarGradient, TABULAR_NUMS } from "./shared/designTokens";
 import { makeCornerBrackets, CardSignatureHandle } from "./shared/cardSignature";
+import { applyCardSignature } from "./shared/cardSignatureSettings";
 import { settle } from "./shared/motion";
 import { applyHighContrast, statusGlyph } from "./shared/highContrast";
 
@@ -171,8 +172,10 @@ export class Visual implements IVisual {
             const hc = applyHighContrast(this.colorPalette, { fallbackColor: "#00d9ff" });
 
             // Corner-bracket re-tint each update (created once in the constructor).
-            this.cornerSignature?.update(hc.active ? hc.color : "#00d9ff", {
-                variant: "cornerBracket",
+            applyCardSignature(this.cornerSignature, this.formattingSettings.cardSignature, {
+                autoHex: "#00d9ff",
+                hcActive: hc.active,
+                hcColor: hc.color,
                 mirror: true,
                 glowMix: hc.active ? 0 : (theme === "dark" ? 55 : 0),
                 muted: false,
@@ -222,9 +225,7 @@ export class Visual implements IVisual {
             zoneSettingsFx.fixedColor.selector = dataViewWildcard.createDataViewWildcardSelector(
                 dataViewWildcard.DataViewWildcardMatchingOption.InstancesAndTotals
             );
-            zoneSettingsFx.fixedColor.altConstantSelector = rows[0]?.selectionId
-                ? rows[0].selectionId.getSelector()
-                : undefined;
+            zoneSettingsFx.fixedColor.altConstantSelector = undefined; // card-level constant persistence: swatch edits apply to ALL instances + round-trip into the pane (first-instance binding persisted a row-0-only override); fx rules stay per-instance via the wildcard selector;
             this.fixedColorHelper = new ColorHelper(
                 this.host.colorPalette,
                 { objectName: "zoneSettings", propertyName: "fixedColor" },
@@ -240,9 +241,7 @@ export class Visual implements IVisual {
             valueSettingsFx.valuesColor.selector = dataViewWildcard.createDataViewWildcardSelector(
                 dataViewWildcard.DataViewWildcardMatchingOption.InstancesAndTotals
             );
-            valueSettingsFx.valuesColor.altConstantSelector = rows[0]?.selectionId
-                ? rows[0].selectionId.getSelector()
-                : undefined;
+            valueSettingsFx.valuesColor.altConstantSelector = undefined; // card-level constant persistence: swatch edits apply to ALL instances + round-trip into the pane (first-instance binding persisted a row-0-only override); fx rules stay per-instance via the wildcard selector;
             this.valuesColorHelper = new ColorHelper(
                 this.host.colorPalette,
                 { objectName: "valueSettings", propertyName: "valuesColor" },
@@ -948,7 +947,7 @@ export class Visual implements IVisual {
         }
 
         this.container.appendChild(empty);
-        this.cornerSignature?.update("#00d9ff", { variant: "cornerBracket", mirror: true, muted: true });
+        applyCardSignature(this.cornerSignature, this.formattingSettings?.cardSignature, { autoHex: "#00d9ff", mirror: true, muted: true });
         this.cornerSignature?.elements.forEach((el) => this.container.appendChild(el));
     }
 
