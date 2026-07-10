@@ -4,7 +4,7 @@
     "displayName": "Codex Progress Bar Card",
     "guid": "codexProgressBarCardB1C2D3E4F5A6B7C8D9E0F1A2B3C4D5E6",
     "visualClassName": "Visual",
-    "version": "1.0.0.2",
+    "version": "1.0.0.3",
     "description": "Horizontal progress bars with zoned colour coding for utilisation tracking.",
     "supportUrl": "https://nexuscodex.nexus/support",
     "gitHubUrl": "https://github.com/Nexus-Codex-pbi/codex-progress-bar-card"

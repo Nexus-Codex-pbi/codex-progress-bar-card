@@ -21,15 +21,15 @@ import { dataViewWildcard } from "powerbi-visuals-utils-dataviewutils";
 import { ColorHelper } from "powerbi-visuals-utils-colorutils";
 
 import { VisualFormattingSettingsModel, alignSelfFor, textAlignFor } from "./settings";
-import { toRgba } from "../../_shared/formatting/colorHelpers";
+import { toRgba } from "./shared/colorHelpers";
 import { clamp, safeNumber, CODEX_TOKENS } from "./utils";
 
 // v3 appearance engine (frozen, Plan 15) — the KPI-family v2 look.
-import { Band, Theme, band, bandColor, targetToken } from "../../_shared/formatting/bandEngine";
-import { surfaceTokens, mix, accentBarGradient, TABULAR_NUMS } from "../../_shared/formatting/designTokens";
-import { makeCornerBrackets, CardSignatureHandle } from "../../_shared/formatting/cardSignature";
-import { settle } from "../../_shared/formatting/motion";
-import { applyHighContrast, statusGlyph } from "../../_shared/formatting/highContrast";
+import { Band, Theme, band, bandColor, targetToken } from "./shared/bandEngine";
+import { surfaceTokens, mix, accentBarGradient, TABULAR_NUMS } from "./shared/designTokens";
+import { makeCornerBrackets, CardSignatureHandle } from "./shared/cardSignature";
+import { settle } from "./shared/motion";
+import { applyHighContrast, statusGlyph } from "./shared/highContrast";
 
 /** Parsed row data for a single progress bar */
 interface BarRow {
