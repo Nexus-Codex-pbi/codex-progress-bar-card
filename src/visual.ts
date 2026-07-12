@@ -87,6 +87,8 @@ export class Visual implements IVisual {
     private fixedColorHelper: ColorHelper | null = null;
     // fx (TEXT-02) state — Values/percentage label colour
     private valuesColorHelper: ColorHelper | null = null;
+    private layoutMode: string = "list";
+    private themeBaseHex: string = "#ffffff";
 
     // v3 card signature — one corner-bracket pair for the whole card
     // (the board tints it with the brand cyan accent, not a per-row band —
@@ -166,6 +168,8 @@ export class Visual implements IVisual {
             applyBorder(this.container, this.formattingSettings.visualBorder, {
                 hcActive: this.isHighContrast,
                 hcColor: this.colorPalette?.foreground?.value,
+                palette: this.host.colorPalette,
+                metadataObjects: options.dataViews?.[0]?.metadata?.objects,
             });
 
             // Theme pick for the v3 token set — only trusts bgHex as a real
@@ -183,6 +187,7 @@ export class Visual implements IVisual {
             const paletteBg = (this.colorPalette && (this.colorPalette as any).background && (this.colorPalette as any).background.value) || "#ffffff";
             const themeSourceHex = (bgTransparencyPct < 100 || bgHexIsUserSet) ? bgHex : paletteBg;
             const theme: Theme = themeFor(themeSourceHex, true);
+            this.themeBaseHex = themeSourceHex;
             const hc = applyHighContrast(this.colorPalette, { fallbackColor: "#00d9ff" });
 
             // Corner-bracket re-tint each update (created once in the constructor).
@@ -264,6 +269,7 @@ export class Visual implements IVisual {
 
             const barSettings = this.formattingSettings.barSettingsCard;
             const layout = barSettings.layout.value?.value || "list";
+            this.layoutMode = layout as string;
             const quantised = !!barSettings.quantisedMode?.value;
 
             // Set layout class
@@ -622,9 +628,20 @@ export class Visual implements IVisual {
         const trackColor = this.isHighContrast ? hcBg : (barSettings.trackColor.value?.value || "#eee9dc");
         const rowBg = this.isHighContrast ? hcBg : (barSettings.rowBackground.value?.value || "");
 
-        // Text settings (unchanged resolution)
+        // The surface this row's TEXT actually sits on: an explicit row
+        // background wins; grid mini-cards have their own panel (themed
+        // dark below, CSS #faf9f6 on light); list rows are transparent
+        // over the outer surface. Adaptive defaults key on THIS, not the
+        // outer theme (Neil 2026-07-12: grid panels stayed light on a
+        // dark visual, so theme-keyed text vanished).
+        const gridPanelHex = theme === "dark" ? surfaceTokens("dark").card : "#faf9f6";
+        const rowSurfaceHex = (rowBg && rowBg.length > 0) ? rowBg
+            : (this.layoutMode === "grid" ? gridPanelHex : this.themeBaseHex);
+        const rowTheme: Theme = themeFor(rowSurfaceHex, true);
+
+        // Text settings (adaptive on untouched defaults, per row surface)
         const setCategoryColor = valueSettings.categoryColor.value?.value || "#1a1a1a";
-        const adaptiveCategoryDefault = setCategoryColor === "#1a1a1a" && theme === "dark"
+        const adaptiveCategoryDefault = setCategoryColor === "#1a1a1a" && rowTheme === "dark"
             ? surfaceTokens("dark").text : setCategoryColor;
         const categoryColor = this.isHighContrast ? hcFg : adaptiveCategoryDefault;
         const catFontSize = valueSettings.categoryFontSize.value > 0
@@ -632,14 +649,17 @@ export class Visual implements IVisual {
 
         const instanceObjects = this.categoricalCategories?.objects?.[rowIndex];
         const setValuesColor = valueSettings.valuesColor.value?.value || "#5e5d5a";
-        const adaptiveValuesDefault = setValuesColor === "#5e5d5a" && theme === "dark"
+        const adaptiveValuesDefault = setValuesColor === "#5e5d5a" && rowTheme === "dark"
             ? surfaceTokens("dark").text : setValuesColor;
         const resolvedValuesColor = this.valuesColorHelper?.getColorForMeasure(instanceObjects, "valuesColor")
             ?? adaptiveValuesDefault;
         const subValueColor = this.isHighContrast ? hcFg : resolvedValuesColor;
         const valFontSize = valueSettings.valuesFontSize.value > 0
             ? valueSettings.valuesFontSize.value : fontSize;
-        const labelColor = this.isHighContrast ? hcFg : (valueSettings.labelColor.value?.value || "#8a8985");
+        const setLabelColor = valueSettings.labelColor.value?.value || "#8a8985";
+        const adaptiveLabelDefault = setLabelColor === "#8a8985" && rowTheme === "dark"
+            ? surfaceTokens("dark").muted : setLabelColor;
+        const labelColor = this.isHighContrast ? hcFg : adaptiveLabelDefault;
         const lblFontSize = valueSettings.labelFontSize.value > 0
             ? valueSettings.labelFontSize.value
             : Math.max((valFontSize || fontSize) - 2, 9);
@@ -712,6 +732,10 @@ export class Visual implements IVisual {
         rowEl.style.fontSize = `${fontSize}px`;
         if (rowBg && rowBg.length > 0) {
             rowEl.style.backgroundColor = rowBg;
+        } else if (this.layoutMode === "grid" && theme === "dark") {
+            // Grid mini-card panel takes the dark card token (CSS default
+            // #faf9f6 stays for light — pixel-identical shipped look).
+            rowEl.style.backgroundColor = surfaceTokens("dark").card;
             rowEl.style.padding = "6px 10px";
             rowEl.style.borderRadius = "6px";
         }
