@@ -27,6 +27,7 @@ import { clamp, safeNumber, CODEX_TOKENS } from "./utils";
 // v3 appearance engine (frozen, Plan 15) — the KPI-family v2 look.
 import { Band, Theme, band, bandColor, targetToken } from "./shared/bandEngine";
 import { surfaceTokens, mix, accentBarGradient, TABULAR_NUMS } from "./shared/designTokens";
+import { applyBorder } from "./shared/borderSettings";
 import { makeCornerBrackets, CardSignatureHandle } from "./shared/cardSignature";
 import { applyCardSignature } from "./shared/cardSignatureSettings";
 import { settle } from "./shared/motion";
@@ -161,6 +162,11 @@ export class Visual implements IVisual {
             this.container.style.backgroundColor = this.isHighContrast
                 ? ""
                 : toRgba(bgHex, bgTransparencyPct);
+            // Visual's own Border card (suite kit).
+            applyBorder(this.container, this.formattingSettings.visualBorder, {
+                hcActive: this.isHighContrast,
+                hcColor: this.colorPalette?.foreground?.value,
+            });
 
             // Theme pick for the v3 token set — only trusts bgHex as a real
             // signal when the container background is actually visible
@@ -168,7 +174,15 @@ export class Visual implements IVisual {
             // board's primary dark-canvas showcase, and this visual has no
             // opaque background by default — see the constructor override note
             // in settings.ts).
-            const theme: Theme = themeFor(bgHex, bgTransparencyPct < 100);
+            // Theme-source ladder (suite standard): visible own background
+            // governs; USER-SET hex governs even at full transparency; only
+            // the untouched default falls through to the report theme's
+            // palette background (old code assumed DARK when transparent —
+            // wrong on light report themes).
+            const bgHexIsUserSet = bgHex.toLowerCase() !== "#ffffff";
+            const paletteBg = (this.colorPalette && (this.colorPalette as any).background && (this.colorPalette as any).background.value) || "#ffffff";
+            const themeSourceHex = (bgTransparencyPct < 100 || bgHexIsUserSet) ? bgHex : paletteBg;
+            const theme: Theme = themeFor(themeSourceHex, true);
             const hc = applyHighContrast(this.colorPalette, { fallbackColor: "#00d9ff" });
 
             // Corner-bracket re-tint each update (created once in the constructor).
@@ -606,13 +620,19 @@ export class Visual implements IVisual {
         const rowBg = this.isHighContrast ? hcBg : (barSettings.rowBackground.value?.value || "");
 
         // Text settings (unchanged resolution)
-        const categoryColor = this.isHighContrast ? hcFg : (valueSettings.categoryColor.value?.value || "#1a1a1a");
+        const setCategoryColor = valueSettings.categoryColor.value?.value || "#1a1a1a";
+        const adaptiveCategoryDefault = setCategoryColor === "#1a1a1a" && theme === "dark"
+            ? surfaceTokens("dark").text : setCategoryColor;
+        const categoryColor = this.isHighContrast ? hcFg : adaptiveCategoryDefault;
         const catFontSize = valueSettings.categoryFontSize.value > 0
             ? valueSettings.categoryFontSize.value : fontSize;
 
         const instanceObjects = this.categoricalCategories?.objects?.[rowIndex];
+        const setValuesColor = valueSettings.valuesColor.value?.value || "#5e5d5a";
+        const adaptiveValuesDefault = setValuesColor === "#5e5d5a" && theme === "dark"
+            ? surfaceTokens("dark").text : setValuesColor;
         const resolvedValuesColor = this.valuesColorHelper?.getColorForMeasure(instanceObjects, "valuesColor")
-            ?? (valueSettings.valuesColor.value?.value || "#5e5d5a");
+            ?? adaptiveValuesDefault;
         const subValueColor = this.isHighContrast ? hcFg : resolvedValuesColor;
         const valFontSize = valueSettings.valuesFontSize.value > 0
             ? valueSettings.valuesFontSize.value : fontSize;
