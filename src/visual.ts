@@ -416,7 +416,12 @@ export class Visual implements IVisual {
         titleEl.style.alignSelf = alignSelfFor(titleAlignVal);
         titleEl.style.textAlign = textAlignFor(titleAlignVal);
         if (t.titleColor?.value?.value) {
-            titleEl.style.color = this.isHighContrast ? this.colorPalette.foreground.value : t.titleColor.value.value;
+            // Adaptive default (D-16 sentinel): untouched shared-Title navy
+            // swaps to the dark text token on dark surfaces.
+            const setTitle = t.titleColor.value.value;
+            const adaptiveTitle = setTitle === "#1a1a2e" && themeFor(this.themeBaseHex, true) === "dark"
+                ? surfaceTokens("dark").text : setTitle;
+            titleEl.style.color = this.isHighContrast ? this.colorPalette.foreground.value : adaptiveTitle;
         }
         titleEl.style.padding = "8px 10px 0";
         // Grid layout mode sets `display:grid` directly on this.container
