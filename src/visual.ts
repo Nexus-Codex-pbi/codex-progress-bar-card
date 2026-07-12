@@ -469,6 +469,8 @@ export class Visual implements IVisual {
         valLabel.style.color = muted;
         valLabel.style.opacity = "0.85";
         valLabel.style.textAlign = "right";
+        valLabel.style.paddingRight = "10px";
+        valLabel.style.boxSizing = "border-box";
         row.appendChild(valLabel);
 
         return row;
@@ -866,6 +868,10 @@ export class Visual implements IVisual {
         // Value wrap: band-tinted percentage + muted actual/target sub-value
         const valueWrap = document.createElement("div");
         valueWrap.style.textAlign = "right";
+        // Breathing room against the row's right edge — visible whenever a
+        // row background makes the edge a hard line (Neil 2026-07-13).
+        valueWrap.style.paddingRight = "10px";
+        valueWrap.style.boxSizing = "border-box";
 
         const pctText = `${Math.round(clamp(rawPct, 0, 999))}%`;
         if (valueSettings.showPercentage.value) {
