@@ -274,7 +274,10 @@ export class Visual implements IVisual {
             // Adjust grid columns based on viewport width
             if (layout === "grid") {
                 const width = options.viewport.width;
-                const cols = width >= 800 ? 3 : width >= 480 ? 2 : 1;
+                const userCols = barSettings.gridColumns?.value ?? 0;
+                const cols = userCols > 0
+                    ? Math.min(6, Math.max(1, Math.round(userCols)))
+                    : (width >= 800 ? 3 : width >= 480 ? 2 : 1);
                 this.container.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
             } else {
                 this.container.style.gridTemplateColumns = "";

@@ -92,6 +92,12 @@
                         "bool": true
                     },
                     "displayName": "Quantised (LED) Mode"
+                },
+                "gridColumns": {
+                    "displayName": "Columns (grid)",
+                    "type": {
+                        "numeric": true
+                    }
                 }
             },
             "displayName": "Bar Settings"

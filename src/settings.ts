@@ -58,6 +58,16 @@ class BarSettingsCard extends FormattingSettingsCard {
         value: { displayName: "List", value: "list" }
     });
 
+    // Grid layout column count — 0 = Auto (by width: >=800px 3, >=480px 2,
+    // else 1; the pre-existing behaviour). Neil 2026-07-12: wide visuals
+    // "chopped to a compact bar set" with no way to pin the count.
+    gridColumns = new formattingSettings.NumUpDown({
+        name: "gridColumns",
+        displayName: "Columns (grid)",
+        description: "Number of grid columns; 0 = automatic by width",
+        value: 0
+    });
+
     rowHeight = new formattingSettings.NumUpDown({
         name: "rowHeight",
         displayName: "Row Height",
@@ -93,6 +103,7 @@ class BarSettingsCard extends FormattingSettingsCard {
         this.barRadius,
         this.trackColor,
         this.layout,
+        this.gridColumns,
         this.rowHeight,
         this.rowBackground,
         this.quantisedMode
