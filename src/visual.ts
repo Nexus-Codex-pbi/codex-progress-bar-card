@@ -245,6 +245,7 @@ export class Visual implements IVisual {
                 muted: false,
             });
 
+            this.releaseRowListeners();
             while (this.container.firstChild) this.container.removeChild(this.container.firstChild);
             // NOTE: the corner-bracket elements are re-appended at the very
             // end of this method (after title/rows/axis/axis-titles-wrap),
