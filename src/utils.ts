@@ -27,11 +27,12 @@ export function clamp(value: number, min: number, max: number): number {
     return Math.min(Math.max(value, min), max);
 }
 
-/** Safely convert to number, returning null for NaN/undefined/null */
+/** Accept finite numeric readings without turning blanks or booleans into zero. */
 export function safeNumber(v: any): number | null {
-    if (v === null || v === undefined) return null;
+    if (typeof v !== "number" && typeof v !== "string") return null;
+    if (typeof v === "string" && v.trim() === "") return null;
     const n = Number(v);
-    return isNaN(n) ? null : n;
+    return Number.isFinite(n) ? n : null;
 }
 
 /** Format a number with display units (auto/none/thousands/millions/billions) */

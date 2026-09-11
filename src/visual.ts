@@ -696,9 +696,9 @@ export class Visual implements IVisual {
         const hasSortOrder = rows.some(r => r.sortOrder !== null);
         if (hasSortOrder) {
             rows.sort((a, b) => {
-                const aVal = a.sortOrder ?? Number.MAX_SAFE_INTEGER;
-                const bVal = b.sortOrder ?? Number.MAX_SAFE_INTEGER;
-                return aVal - bVal;
+                if (a.sortOrder === null) return b.sortOrder === null ? 0 : 1;
+                if (b.sortOrder === null) return -1;
+                return a.sortOrder - b.sortOrder;
             });
         }
 
