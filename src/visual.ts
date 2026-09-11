@@ -197,8 +197,9 @@ export class Visual implements IVisual {
             const bgHex = background.backgroundColor.value?.value ?? "#ffffff";
             const bgTransparencyPct = background.transparency.value ?? 100;
             this.container.style.backgroundColor = this.isHighContrast
-                ? ""
+                ? this.colorPalette.background.value
                 : toRgba(bgHex, bgTransparencyPct);
+            this.container.style.setProperty("--pbc-scrollbar", this.isHighContrast ? this.colorPalette.foreground.value : "#cccccc");
             // Visual's own Border card (suite kit).
             applyBorder(this.container, this.formattingSettings.visualBorder, {
                 hcActive: this.isHighContrast,
@@ -526,7 +527,7 @@ export class Visual implements IVisual {
         overlay.style.bottom = "0";
         overlay.style.pointerEvents = "none";
 
-        const border = surfaceTokens(theme).border;
+        const border = this.isHighContrast ? this.colorPalette.foreground.value : surfaceTokens(theme).border;
         for (let v = 0; v <= SCALE; v += 20) {
             const line = document.createElement("div");
             line.style.position = "absolute";
@@ -535,7 +536,7 @@ export class Visual implements IVisual {
             line.style.left = `${(v / SCALE) * 100}%`;
             line.style.width = "1px";
             line.style.background = border;
-            line.style.opacity = "0.7";
+            line.style.opacity = this.isHighContrast ? "1" : "0.7";
             overlay.appendChild(line);
         }
         return overlay;
@@ -549,7 +550,7 @@ export class Visual implements IVisual {
         row.style.margin = "8px 110px 0 104px";
         row.style.height = "16px";
 
-        const muted = this.mutedOn(this.themeBaseHex);
+        const muted = this.isHighContrast ? this.colorPalette.foreground.value : this.mutedOn(this.themeBaseHex);
         for (let v = 0; v <= SCALE; v += 20) {
             const label = document.createElement("span");
             label.textContent = String(v);
@@ -858,6 +859,7 @@ export class Visual implements IVisual {
         rowEl.style.gap = "3px";
         rowEl.style.minHeight = `${rowHeight}px`;
         rowEl.style.fontSize = `${fontSize}px`;
+        if (hc.active) rowEl.style.borderColor = hc.color;
         if (rowBg && rowBg.length > 0) {
             rowEl.style.backgroundColor = rowBg;
         } else if (this.layoutMode === "grid" && theme === "dark") {
@@ -1158,7 +1160,9 @@ export class Visual implements IVisual {
 
         if (this.isHighContrast) {
             iconEl.style.color = this.colorPalette.foreground.value;
+            iconEl.style.opacity = "1";
             textEl.style.color = this.colorPalette.foreground.value;
+            [b1, b2, b3].forEach(field => field.style.color = this.colorPalette.foreground.value);
         } else {
             const ink = this.mutedOn(this.themeBaseHex);
             iconEl.style.color = ink;
