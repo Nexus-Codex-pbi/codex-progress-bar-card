@@ -37,12 +37,15 @@ import { applyCardSignature } from "./shared/cardSignatureSettings";
 import { settle } from "./shared/motion";
 import { applyHighContrast, statusGlyph } from "./shared/highContrast";
 import { LicenseGate } from "./shared/licensing";
+import { formatModelNumber } from "./shared/numberFormat";
 
 /** Parsed row data for a single progress bar */
 interface BarRow {
     category: string;
     currentValue: number;
     maxValue: number;
+    currentFormat: string | undefined;
+    maxFormat: string | undefined;
     label: string | null;
     sortOrder: number | null;
     selectionId: ISelectionId | null;
@@ -625,6 +628,8 @@ export class Visual implements IVisual {
                 category: String(categories[i] ?? ""),
                 currentValue: current,
                 maxValue: max,
+                currentFormat: currentValueCol.source.format,
+                maxFormat: maxValueCol.source.format,
                 label: labelValue != null ? String(labelValue) : null,
                 // NB: no `percentage` field. It used to hold
                 // clamp((current/max)*100, 0, 100) and was read by nothing —
@@ -1030,14 +1035,13 @@ export class Visual implements IVisual {
         }
 
         if (valueSettings.showValues.value) {
-            const prefix = valueSettings.valuePrefix.value || "";
             const unit = valueSettings.valueUnit.value || "";
             const unitSuffix = unit ? ` ${unit}` : "";
             const sub = document.createElement("div");
             sub.style.fontSize = `${lblFontSize}px`;
             sub.style.color = subValueColor;
             sub.style.fontFeatureSettings = TABULAR_NUMS;
-            sub.textContent = `${prefix}${this.formatNum(row.currentValue)} / ${prefix}${this.formatNum(row.maxValue)}${unitSuffix}`;
+            sub.textContent = `${this.formatReading(row.currentValue, row.currentFormat)} / ${this.formatReading(row.maxValue, row.maxFormat)}${unitSuffix}`;
             valueWrap.appendChild(sub);
         }
         grid.appendChild(valueWrap);
@@ -1065,8 +1069,8 @@ export class Visual implements IVisual {
         rowEl.addEventListener("mousemove", (e: MouseEvent) => {
             const tooltipItems: VisualTooltipDataItem[] = [
                 { displayName: "Category", value: row.category },
-                { displayName: "Current", value: this.formatNum(row.currentValue) },
-                { displayName: "Max", value: this.formatNum(row.maxValue) },
+                { displayName: "Current", value: this.formatReading(row.currentValue, row.currentFormat, true) },
+                { displayName: "Max", value: this.formatReading(row.maxValue, row.maxFormat, true) },
                 { displayName: "Progress", value: pctText }
             ];
             if (row.label) {
@@ -1094,9 +1098,17 @@ export class Visual implements IVisual {
         return rowEl;
     }
 
-    /** Format a number for display (no decimals if whole, 1 decimal otherwise) */
-    private formatNum(value: number): string {
-        return Number.isInteger(value) ? value.toString() : value.toFixed(1);
+    private formatReading(value: number, format: string | undefined, includeUnit = false): string {
+        const settings = this.formattingSettings.valueSettingsCard;
+        const prefix = settings.valuePrefix.value || "";
+        let text = formatModelNumber(value, format, this.host.locale);
+        // A model currency symbol and the same explicit prefix are one unit.
+        const unsigned = text.startsWith("-") ? text.slice(1) : text;
+        if (prefix && !unsigned.startsWith(prefix)) {
+            text = text.startsWith("-") ? `-${prefix}${unsigned}` : `${prefix}${text}`;
+        }
+        const unit = includeUnit ? settings.valueUnit.value : "";
+        return unit ? `${text} ${unit}` : text;
     }
 
     /** Render empty state placeholder */
