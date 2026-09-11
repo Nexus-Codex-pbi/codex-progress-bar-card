@@ -59,6 +59,10 @@ interface BarRow {
 // row's own value is normalised against its OWN target.
 const SCALE = 120;
 const TICK_PCT = (100 / SCALE) * 100; // 83.33%
+// The widest ratio the 96px value column can show as an exact number. Past
+// it the label reads as a BOUND (">999%"), never as an exact figure the data
+// never had — see the pctText derivation in renderRow (NEXUS cycle-10 §4).
+const PCT_DISPLAY_LIMIT = 999;
 const QUANTISED_BLOCKS = 24;
 const GRID_TEMPLATE = "90px 1fr 96px";
 
@@ -598,7 +602,14 @@ export class Visual implements IVisual {
             const current = safeNumber(currentValueCol.values[i]);
             const max = safeNumber(maxValueCol.values[i]);
 
-            if (current === null || max === null || max === 0) continue;
+            // A non-positive maximum has no meaningful ratio. It used to be
+            // accepted: 50/-100 rendered "0%" in the SUCCESS colour and
+            // -50/-100 rendered "50%" in the success colour, because the
+            // shared band() reads a non-positive target as "met". This visual
+            // has no negative-domain design — inventing one is a product
+            // decision, not a render fix — so the row is rejected exactly as
+            // a zero maximum already was (NEXUS cycle-10 §4).
+            if (current === null || max === null || !(max > 0)) continue;
 
             const percentage = clamp((current / max) * 100, 0, 100);
             const labelValue = labelCol ? labelCol.values[i] : null;
@@ -764,7 +775,12 @@ export class Visual implements IVisual {
         // ─── 120%-scale target-in-track geometry ───────────────────────
         const rawPct = (row.currentValue / row.maxValue) * 100;
         const hasOver = rawPct > 100;
-        const wBase = (Math.min(rawPct, 100) / SCALE) * 100;
+        // Clamp the GEOMETRY at both ends: a negative reading used to produce
+        // a negative CSS width, which the browser rejects outright, leaving
+        // the fill with no width declaration at all (§4). 0% is the honest
+        // bar for a reading below the track's origin; the label carries the
+        // real number.
+        const wBase = (clamp(rawPct, 0, 100) / SCALE) * 100;
         const wOver = hasOver ? ((Math.min(rawPct, SCALE) - 100) / SCALE) * 100 : 0;
 
         // Row container: label / track / value, 90px/1fr/96px grid
@@ -912,7 +928,17 @@ export class Visual implements IVisual {
         valueWrap.style.paddingRight = "10px";
         valueWrap.style.boxSizing = "border-box";
 
-        const pctText = `${Math.round(clamp(rawPct, 0, 999))}%`;
+        // Bounded geometry, truthful text (NEXUS cycle-10 §4). The track only
+        // draws to the 120% scale, but the label must not assert a figure the
+        // data never had: 1250/100 read exactly "999%" — in the tooltip too —
+        // and -25/100 read "0%" beside a -25 reading. Out-of-range ratios now
+        // read as a bound; a negative ratio keeps its sign.
+        const roundedPct = Math.round(rawPct);
+        const pctText = roundedPct > PCT_DISPLAY_LIMIT
+            ? `>${PCT_DISPLAY_LIMIT}%`
+            : roundedPct < -PCT_DISPLAY_LIMIT
+                ? `<-${PCT_DISPLAY_LIMIT}%`
+                : `${roundedPct}%`;
         if (valueSettings.showPercentage.value) {
             const pv = document.createElement("div");
             pv.style.fontSize = `${valFontSize}px`;
