@@ -82,7 +82,7 @@ const MIN_TRACK_WIDTH = 80;
 export class Visual implements IVisual {
     private target: HTMLElement;
     private container: HTMLDivElement;
-    private formattingSettings: VisualFormattingSettingsModel;
+    private formattingSettings = new VisualFormattingSettingsModel();
     private formattingSettingsService: FormattingSettingsService;
     private host: IVisualHost;
     private events: IVisualEventService;
