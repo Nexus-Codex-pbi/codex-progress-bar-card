@@ -738,8 +738,12 @@ export class Visual implements IVisual {
     ): Band {
         const threshold = (raw: number | undefined, fallback: number): number =>
             Number.isFinite(raw) ? (raw as number) : fallback;
-        const upper = threshold(zoneSettings.safeMax.value, 100);
-        const lower = threshold(zoneSettings.warningMax.value, 90);
+        const first = threshold(zoneSettings.safeMax.value, 100);
+        const second = threshold(zoneSettings.warningMax.value, 90);
+        const upper = Math.max(first, second);
+        const lower = Math.min(first, second);
+        zoneSettings.safeMax.value = upper;
+        zoneSettings.warningMax.value = lower;
         const percent = (current / max) * 100;
         if ((zoneSettings.maxValueMeaning.value?.value || "goal") === "limit") {
             if (percent >= upper) return "danger";

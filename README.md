@@ -54,6 +54,7 @@ The visual provides the following format pane cards:
   Limit is breached (danger). Default 100
 - Lower Threshold: Percentage of Max at or above which the bar enters the warning
   band. Default 90
+- Reversed threshold endpoints are ordered before rendering and shown in that order in the pane.
 
 > Migration note. Before this release the two thresholds were shown in the format
 > pane but were not read by the renderer: the pane offered 60 and 25 while every row
