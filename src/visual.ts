@@ -893,6 +893,9 @@ export class Visual implements IVisual {
         // (board's .prow), plus the optional subtitle label below.
         const rowEl = document.createElement("div");
         rowEl.className = "progress-row";
+        rowEl.tabIndex = 0;
+        rowEl.setAttribute("role", "button");
+        rowEl.style.color = categoryColor;
         rowEl.style.display = "flex";
         rowEl.style.flexDirection = "column";
         rowEl.style.gap = "3px";
@@ -1057,6 +1060,7 @@ export class Visual implements IVisual {
             : roundedPct < -PCT_DISPLAY_LIMIT
                 ? `<-${PCT_DISPLAY_LIMIT}%`
                 : `${roundedPct}%`;
+        rowEl.setAttribute("aria-label", `${row.category || "(Blank)"}: ${this.formatReading(row.currentValue, row.currentFormat)} / ${this.formatReading(row.maxValue, row.maxFormat, true)}, ${pctText}${row.label ? `, ${row.label}` : ""}`);
         if (valueSettings.showPercentage.value) {
             const pv = document.createElement("div");
             pv.style.fontSize = `${valFontSize}px`;
@@ -1153,6 +1157,18 @@ export class Visual implements IVisual {
             if (row.selectionId) {
                 this.selectionManager.select(row.selectionId, e.ctrlKey || e.metaKey);
             }
+            e.stopPropagation();
+        });
+        rowEl.addEventListener("keydown", (e: KeyboardEvent) => {
+            if (e.key === "Enter" || e.key === " ") {
+                if (row.selectionId) this.selectionManager.select(row.selectionId, e.ctrlKey || e.metaKey);
+            } else if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) {
+                const rect = rowEl.getBoundingClientRect();
+                this.selectionManager.showContextMenu(row.selectionId || {}, { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 });
+            } else {
+                return;
+            }
+            e.preventDefault();
             e.stopPropagation();
         });
 
