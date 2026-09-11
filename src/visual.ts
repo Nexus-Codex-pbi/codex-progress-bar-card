@@ -787,7 +787,7 @@ export class Visual implements IVisual {
         const categoryDecoration = valueSettings.categoryUnderline.value ? "underline" : "none";
 
         const valuesFontFamily = valueSettings.valuesFontFamily.value || "Segoe UI, Tahoma, Geneva, Verdana, sans-serif";
-        const valuesWeight = weightFor(valueSettings.valuesBold.value, "700");
+        const valuesWeight = weightFor(valueSettings.valuesBold.value, "400");
         const valuesStyle = valueSettings.valuesItalic.value ? "italic" : "normal";
         const valuesDecoration = valueSettings.valuesUnderline.value ? "underline" : "none";
 
@@ -1016,7 +1016,9 @@ export class Visual implements IVisual {
             pv.style.textDecoration = valuesDecoration;
             pv.style.fontFeatureSettings = TABULAR_NUMS;
             pv.style.lineHeight = "1.2";
-            pv.style.color = hc.active ? hc.color : signalHex;
+            const hasExplicitValuesColor = hasValuesOverride
+                || !!this.lastUpdateOptions?.dataViews?.[0]?.metadata?.objects?.valueSettings?.valuesColor;
+            pv.style.color = hc.active ? hc.color : hasExplicitValuesColor ? resolvedValuesColor : signalHex;
             const glyph = hc.active && rowBand ? `${statusGlyph(rowBand)} ` : "";
             pv.textContent = glyph + pctText;
             valueWrap.appendChild(pv);
@@ -1038,7 +1040,11 @@ export class Visual implements IVisual {
             const unit = valueSettings.valueUnit.value || "";
             const unitSuffix = unit ? ` ${unit}` : "";
             const sub = document.createElement("div");
-            sub.style.fontSize = `${lblFontSize}px`;
+            sub.style.fontSize = `${valFontSize}px`;
+            sub.style.fontFamily = valuesFontFamily;
+            sub.style.fontWeight = valuesWeight;
+            sub.style.fontStyle = valuesStyle;
+            sub.style.textDecoration = valuesDecoration;
             sub.style.color = subValueColor;
             sub.style.fontFeatureSettings = TABULAR_NUMS;
             sub.textContent = `${this.formatReading(row.currentValue, row.currentFormat)} / ${this.formatReading(row.maxValue, row.maxFormat)}${unitSuffix}`;
