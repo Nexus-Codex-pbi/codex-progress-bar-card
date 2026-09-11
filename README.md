@@ -46,9 +46,22 @@ The visual provides the following format pane cards:
 
 ### Zone Settings
 - Color Mode: Fixed (single color) or Zoned (three zones: safe, warning, danger)
+- Max Value is: Goal (higher is better — at or above the Upper Threshold is safe) or
+  Limit (Max is a ceiling — at or above the Upper Threshold is danger). Default Goal
 - Fixed Color: Color used when Color Mode is Fixed
-- Safe Max: Maximum value for the safe zone (as a percentage of maxValue, 0-100)
-- Warning Max: Maximum value for the warning zone (as a percentage of maxValue, 0-100)
+- Upper Threshold: Percentage of Max at or above which a Goal is met (safe) or a
+  Limit is breached (danger). Default 100
+- Lower Threshold: Percentage of Max at or above which the bar enters the warning
+  band. Default 90
+
+> Migration note. Before this release the two thresholds were shown in the format
+> pane but were not read by the renderer: the pane offered 60 and 25 while every row
+> was judged at 90 and 100, so editing them changed nothing. They are read again, and
+> their defaults now state the law that has been shipping (100 and 90). A report that
+> never moved a threshold renders exactly as before; a report that did move one now
+> gets the colours it asked for. The previous labels were "Warning → Safe (%)" and
+> "Danger → Warning (%)"; the underlying property names (`safeMax`, `warningMax`) are
+> unchanged, so saved reports keep loading.
 - Safe Color: Fill color for the safe zone
 - Warning Color: Fill color for the warning zone
 - Danger Color: Fill color for the danger zone
@@ -81,7 +94,8 @@ The visual provides the following format pane cards:
    - Sort Order: Optional numeric measure to control row order (ascending)
 4. Use the format pane to adjust appearance:
    - Set bar dimensions, track color, layout, and row height
-   - Choose color mode (fixed or zoned) and configure zone thresholds and colors
+   - Choose color mode (fixed or zoned), state whether Max Value is a Goal or a
+     Limit, and configure zone thresholds and colors
    - Adjust value display, prefixes, units, fonts, and colors
    - Enable axis titles if desired
 5. Interact:
