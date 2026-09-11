@@ -32,6 +32,7 @@ A card that displays one or more progress bars, each showing a current value aga
 | sortOrder | Sort Order | Measure | No (max 1) | Numeric | Optional numeric sort order (ascending) |
 
 Note: Current Value and Max Value are required for meaningful display. Each role can accept only one field.
+Without Category, the visual renders the single aggregated Current Value / Max Value pair.
 
 ## Formatting Options
 The visual provides the following format pane cards:
@@ -74,8 +75,9 @@ The visual provides the following format pane cards:
 - Font Size: Base font size for text in pixels
 - Category Color: Text color for the category label
 - Category Font Size: Font size for the category label
-- Values Color: Text color for the current/max values
-- Values Font Size: Font size for the current/max values
+- Values Color: Text color for both percentage and current/max values when explicitly set
+- Values Font Size: Font size for both percentage and current/max values; Values font styles apply to both
+- Model number formats: Current Value and Max Value each retain their own model precision and units, including in tooltips
 - Label Color: Text color for the optional label/subtitle
 
 ### Axis Settings
@@ -104,13 +106,13 @@ The visual provides the following format pane cards:
    - Hover to see a tooltip with category, current value, max value, percentage, and label
 
 ## Limitations
-- The visual expects numeric values for Current Value and Max Value. Non-numeric values are treated as zero.
-- If Current Value or Max Value is missing or zero, the bar is not displayed.
-- The Label role, if bound, is displayed as text; numeric values are formatted as numbers.
-- Sort Order, if bound, must be numeric; non-numeric values are treated as zero (no sorting).
+- The visual expects numeric values for Current Value and Max Value. Missing or invalid pairs are skipped.
+- Zero current is displayed. Non-positive maxima are skipped; negative current retains its sign while bar geometry is bounded at zero.
+- The Label role, if bound, is displayed as text.
+- Sort Order, if bound, must be numeric; missing sort values follow finite sort values.
 - Each data role accepts only one field.
 - The visual uses a data reduction algorithm (top 30,000 rows) which may limit the number of rows displayed.
-- In Grid layout, the number of columns is determined by the viewport width and cannot be manually set.
+- In Grid layout, Columns can be pinned from 1 to 6; 0 chooses columns from usable row width. Narrow rows stack, and LED gaps shrink to keep blocks visible.
 - The visual does not support drill-through or bookmark selection.
 
 ## Support

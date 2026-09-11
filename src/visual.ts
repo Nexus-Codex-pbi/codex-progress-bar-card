@@ -256,7 +256,7 @@ export class Visual implements IVisual {
             this.renderTitle();
 
             const dataView: DataView = options.dataViews?.[0];
-            if (!dataView?.categorical?.categories?.[0]?.values?.length) {
+            if (!dataView?.categorical) {
                 this.renderEmptyState(hc);
                 this.events.renderingFinished(options);
                 return;
@@ -619,8 +619,7 @@ export class Visual implements IVisual {
     /** Parse the categorical dataView into typed row objects */
     private parseData(dataView: DataView): BarRow[] {
         const categorical = dataView.categorical;
-        const catColumn = categorical.categories[0];
-        const categories = catColumn.values;
+        const catColumn = categorical.categories?.[0];
         const valueColumns = categorical.values || [];
 
         // Find column indices by role
@@ -640,6 +639,8 @@ export class Visual implements IVisual {
         if (!currentValueCol || !maxValueCol) {
             return [];
         }
+        const categories = catColumn?.values ?? (currentValueCol.values.length
+            ? [currentValueCol.source.displayName || "Current Value"] : []);
 
         const rows: BarRow[] = [];
         for (let i = 0; i < categories.length; i++) {
@@ -658,9 +659,10 @@ export class Visual implements IVisual {
             const labelValue = labelCol ? labelCol.values[i] : null;
             const sortValue = sortOrderCol ? safeNumber(sortOrderCol.values[i]) : null;
 
-            const selectionId = this.host.createSelectionIdBuilder()
-                .withCategory(catColumn, i)
-                .createSelectionId();
+            const builder = this.host.createSelectionIdBuilder();
+            const selectionId = (catColumn
+                ? builder.withCategory(catColumn, i)
+                : builder.withMeasure(currentValueCol.source.queryName)).createSelectionId();
 
             rows.push({
                 category: String(categories[i] ?? ""),
@@ -682,7 +684,7 @@ export class Visual implements IVisual {
                 // HERE, while `i` still indexes the raw category column —
                 // after the sort below (or after a skipped row) the render
                 // position no longer matches this index (§2).
-                objects: catColumn.objects?.[i]
+                objects: catColumn?.objects?.[i]
             });
         }
 
@@ -1193,16 +1195,12 @@ export class Visual implements IVisual {
         textEl.className = "progress-empty-text";
         textEl.appendChild(document.createTextNode(this.localizationManager.getDisplayName("Visual_EmptyState_Prefix")));
         const b1 = document.createElement("strong");
-        b1.textContent = this.localizationManager.getDisplayName("Visual_Field_Category");
+        b1.textContent = this.localizationManager.getDisplayName("Visual_Field_CurrentValue");
         textEl.appendChild(b1);
-        textEl.appendChild(document.createTextNode(", "));
+        textEl.appendChild(document.createTextNode(" " + this.localizationManager.getDisplayName("Visual_EmptyState_And") + " "));
         const b2 = document.createElement("strong");
-        b2.textContent = this.localizationManager.getDisplayName("Visual_Field_CurrentValue");
+        b2.textContent = this.localizationManager.getDisplayName("Visual_Field_MaxValue");
         textEl.appendChild(b2);
-        textEl.appendChild(document.createTextNode(", " + this.localizationManager.getDisplayName("Visual_EmptyState_And") + " "));
-        const b3 = document.createElement("strong");
-        b3.textContent = this.localizationManager.getDisplayName("Visual_Field_MaxValue");
-        textEl.appendChild(b3);
         textEl.appendChild(document.createTextNode(" " + this.localizationManager.getDisplayName("Visual_EmptyState_Suffix")));
         empty.appendChild(textEl);
 
@@ -1210,13 +1208,13 @@ export class Visual implements IVisual {
             iconEl.style.color = this.colorPalette.foreground.value;
             iconEl.style.opacity = "1";
             textEl.style.color = this.colorPalette.foreground.value;
-            [b1, b2, b3].forEach(field => field.style.color = this.colorPalette.foreground.value);
+            [b1, b2].forEach(field => field.style.color = this.colorPalette.foreground.value);
         } else {
             const ink = this.mutedOn(this.themeBaseHex);
             iconEl.style.color = ink;
             iconEl.style.opacity = "1";
             textEl.style.color = ink;
-            [b1, b2, b3].forEach(field => field.style.color = ink);
+            [b1, b2].forEach(field => field.style.color = ink);
         }
 
         this.container.appendChild(empty);
