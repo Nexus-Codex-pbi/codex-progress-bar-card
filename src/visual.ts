@@ -21,7 +21,7 @@ import { dataViewWildcard } from "powerbi-visuals-utils-dataviewutils";
 import { ColorHelper } from "powerbi-visuals-utils-colorutils";
 
 import { VisualFormattingSettingsModel, alignSelfFor, textAlignFor } from "./settings";
-import { toRgba } from "./shared/colorHelpers";
+import { toRgba, compositeOver, surfaceTone } from "./shared/colorHelpers";
 import { clamp, safeNumber, CODEX_TOKENS } from "./utils";
 
 // v3 appearance engine (frozen, Plan 15) — the KPI-family v2 look.
@@ -62,17 +62,12 @@ const TICK_PCT = (100 / SCALE) * 100; // 83.33%
 const QUANTISED_BLOCKS = 24;
 const GRID_TEMPLATE = "90px 1fr 96px";
 
-/** Luminance-based theme pick (matches the pbiKpiCard v3 pilot's own
- * 0.55 threshold convention) — used only when the container's own
- * background is actually visible (not fully transparent). */
-function themeFor(hex: string, visible: boolean): Theme {
-    if (!visible) return "dark";
-    const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})/i.exec(hex || "");
-    if (!m) return "dark";
-    const r = parseInt(m[1], 16), g = parseInt(m[2], 16), b = parseInt(m[3], 16);
-    const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-    return luminance > 0.55 ? "light" : "dark";
-}
+// Luminance-based theme pick now comes from the shared surfaceTone() helper
+// (src/shared/colorHelpers.ts) — same Rec.601 weights and same 0.55
+// threshold this file used locally, so opaque surfaces resolve identically.
+// The local themeFor() is gone because its `visible=false -> dark` branch
+// was the class-1 defect in miniature: it judged ink from a surface the
+// viewer never sees (NEXUS cycle-10 §6).
 
 export class Visual implements IVisual {
     private target: HTMLElement;
@@ -202,22 +197,20 @@ export class Visual implements IVisual {
                 metadataObjects: options.dataViews?.[0]?.metadata?.objects,
             });
 
-            // Theme pick for the v3 token set — only trusts bgHex as a real
-            // signal when the container background is actually visible
-            // (transparency < 100); otherwise defaults dark (matches the
-            // board's primary dark-canvas showcase, and this visual has no
-            // opaque background by default — see the constructor override note
-            // in settings.ts).
-            // Theme-source ladder (suite standard): visible own background
-            // governs; USER-SET hex governs even at full transparency; only
-            // the untouched default falls through to the report theme's
-            // palette background (old code assumed DARK when transparent —
-            // wrong on light report themes).
-            const bgHexIsUserSet = bgHex.toLowerCase() !== "#ffffff";
-            const paletteBg = (this.colorPalette && (this.colorPalette as any).background && (this.colorPalette as any).background.value) || "#ffffff";
-            const themeSourceHex = (bgTransparencyPct < 100 || bgHexIsUserSet) ? bgHex : paletteBg;
-            const theme: Theme = themeFor(themeSourceHex, true);
-            this.themeBaseHex = themeSourceHex;
+            // Theme pick for the v3 token set — judged on the surface a
+            // viewer ACTUALLY SEES (NEXUS cycle-10 §6, class 1). The
+            // container paints bgHex at bgTransparencyPct; whatever shows
+            // through it is the report/theme background the host reports.
+            // Composite the two FIRST, then pick the tone: a user-set black
+            // background at 100% transparency paints nothing, so it must not
+            // drag the ink light (the old ladder trusted a USER-SET hex even
+            // at full transparency and chose near-white ink over a white
+            // report), and an untouched default still falls through to the
+            // palette background exactly as before.
+            const paletteBg = this.colorPalette?.background?.value || "#ffffff";
+            const visibleSurfaceHex = compositeOver(bgHex, bgTransparencyPct, paletteBg);
+            const theme: Theme = surfaceTone(visibleSurfaceHex);
+            this.themeBaseHex = visibleSurfaceHex;
             const hc = applyHighContrast(this.colorPalette, { fallbackColor: "#00d9ff" });
 
             // Corner-bracket re-tint each update (created once in the constructor).
@@ -364,7 +357,10 @@ export class Visual implements IVisual {
                 const baseFontSize = this.formattingSettings.valueSettingsCard.fontSize.value || 12;
                 const axisTitleFontSize = baseFontSize + 2;
                 const hcFg = this.isHighContrast ? this.colorPalette.foreground.value : null;
-                const titleColor = hcFg || "#1a1a1a";
+                // Adaptive ink, same law as the category/values text: the
+                // #1a1a1a literal stayed dark-on-dark on a dark report
+                // (NEXUS cycle-10 §6). High contrast still wins outright.
+                const titleColor = hcFg || (theme === "dark" ? surfaceTokens("dark").text : "#1a1a1a");
 
                 // Wrap existing content for Y axis title
                 if (yAxisTitle) {
@@ -449,7 +445,7 @@ export class Visual implements IVisual {
             // Adaptive default (D-16 sentinel): untouched shared-Title navy
             // swaps to the dark text token on dark surfaces.
             const setTitle = t.titleColor.value.value;
-            const adaptiveTitle = setTitle === "#1a1a2e" && themeFor(this.themeBaseHex, true) === "dark"
+            const adaptiveTitle = setTitle === "#1a1a2e" && surfaceTone(this.themeBaseHex) === "dark"
                 ? surfaceTokens("dark").text : setTitle;
             titleEl.style.color = this.isHighContrast ? this.colorPalette.foreground.value : adaptiveTitle;
         }
@@ -678,7 +674,7 @@ export class Visual implements IVisual {
         const gridPanelHex = theme === "dark" ? surfaceTokens("dark").card : "#faf9f6";
         const rowSurfaceHex = (rowBg && rowBg.length > 0) ? rowBg
             : (this.layoutMode === "grid" ? gridPanelHex : this.themeBaseHex);
-        const rowTheme: Theme = themeFor(rowSurfaceHex, true);
+        const rowTheme: Theme = surfaceTone(rowSurfaceHex);
 
         // Text settings (adaptive on untouched defaults, per row surface)
         const setCategoryColor = valueSettings.categoryColor.value?.value || "#1a1a1a";
@@ -692,8 +688,17 @@ export class Visual implements IVisual {
         const setValuesColor = valueSettings.valuesColor.value?.value || "#5e5d5a";
         const adaptiveValuesDefault = setValuesColor === "#5e5d5a" && rowTheme === "dark"
             ? surfaceTokens("dark").text : setValuesColor;
-        const resolvedValuesColor = this.valuesColorHelper?.getColorForMeasure(instanceObjects, "valuesColor")
-            ?? adaptiveValuesDefault;
+        // ColorHelper.getColorForMeasure falls back to its own constructed
+        // default (the card's swatch value) whenever the row carries no
+        // override, so `?? adaptiveValuesDefault` could never fire and the
+        // adaptive default above was dead code — the raw actual/target pair
+        // stayed #5e5d5a on a dark report while the category text adapted
+        // (NEXUS cycle-10 §6). Consult the helper only when THIS row really
+        // has a per-instance / fx override.
+        const hasValuesOverride = !!instanceObjects?.["valueSettings"]?.["valuesColor"];
+        const resolvedValuesColor = (hasValuesOverride
+            ? this.valuesColorHelper?.getColorForMeasure(instanceObjects, "valuesColor")
+            : null) ?? adaptiveValuesDefault;
         const subValueColor = this.isHighContrast ? hcFg : resolvedValuesColor;
         const valFontSize = valueSettings.valuesFontSize.value > 0
             ? valueSettings.valuesFontSize.value : fontSize;
