@@ -43,6 +43,12 @@ interface BarRow {
     percentage: number;
     sortOrder: number | null;
     selectionId: ISelectionId | null;
+    /** The per-instance object overrides (fx / "set for this row" swatches)
+     *  belonging to THIS category, captured at parse time from
+     *  `categories.objects[i]`. Carried on the row so a later sort or a
+     *  skipped row can never re-key a conditional colour by display
+     *  position (NEXUS cycle-10 §2). */
+    objects: powerbi.DataViewObjects | undefined;
 }
 
 // v2 board look (Codex Progress Bar Card v2.dc.html): the track scale runs
@@ -82,9 +88,9 @@ export class Visual implements IVisual {
     private colorPalette: ISandboxExtendedColorPalette;
 
     // State for the Fixed Colour fx wiring (TRANS-04) — per-row selectionIds
-    // are already carried on BarRow, but the per-instance object overrides
-    // (categories.objects[rowIndex]) only live on the raw DataViewCategoryColumn.
-    private categoricalCategories: powerbi.DataViewCategoryColumn | undefined;
+    // AND the per-instance object overrides are both carried on BarRow
+    // (BarRow.objects, captured in parseData while the raw category index
+    // is still valid), so nothing here keys off a display position.
     private fixedColorHelper: ColorHelper | null = null;
     // fx (TEXT-02) state — Values/percentage label colour
     private valuesColorHelper: ColorHelper | null = null;
@@ -261,9 +267,9 @@ export class Visual implements IVisual {
             // altConstantSelector bound to the first row's selectionId (the
             // "set for all" swatch edit path), resolved per-row at render
             // via ColorHelper.getColorForMeasure against each category's own
-            // per-instance object overrides (categoricalCategories.objects[rowIndex]) —
-            // same pattern already proven on pbiTimeBreakdown's Total Colour.
-            this.categoricalCategories = dataView.categorical?.categories?.[0];
+            // per-instance object overrides (BarRow.objects, bound to the
+            // row's identity in parseData) — same pattern already proven on
+            // pbiTimeBreakdown's Total Colour.
             const zoneSettingsFx = this.formattingSettings.zoneSettingsCard;
             zoneSettingsFx.fixedColor.selector = dataViewWildcard.createDataViewWildcardSelector(
                 dataViewWildcard.DataViewWildcardMatchingOption.InstancesAndTotals
@@ -335,8 +341,8 @@ export class Visual implements IVisual {
                 rowsWrap.appendChild(this.renderGridlines(theme));
             }
 
-            for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
-                rowsWrap.appendChild(this.renderRow(rows[rowIndex], rowIndex, theme, hc, quantised));
+            for (const row of rows) {
+                rowsWrap.appendChild(this.renderRow(row, theme, hc, quantised));
             }
             this.container.appendChild(rowsWrap);
 
@@ -613,7 +619,12 @@ export class Visual implements IVisual {
                 label: labelValue != null ? String(labelValue) : null,
                 percentage,
                 sortOrder: sortValue,
-                selectionId
+                selectionId,
+                // Bind the per-instance overrides to the row's own identity
+                // HERE, while `i` still indexes the raw category column —
+                // after the sort below (or after a skipped row) the render
+                // position no longer matches this index (§2).
+                objects: catColumn.objects?.[i]
             });
         }
 
@@ -636,7 +647,6 @@ export class Visual implements IVisual {
      *  + muted actual/target sub-value. */
     private renderRow(
         row: BarRow,
-        rowIndex: number,
         theme: Theme,
         hc: ReturnType<typeof applyHighContrast>,
         quantised: boolean
@@ -678,7 +688,7 @@ export class Visual implements IVisual {
         const catFontSize = valueSettings.categoryFontSize.value > 0
             ? valueSettings.categoryFontSize.value : fontSize;
 
-        const instanceObjects = this.categoricalCategories?.objects?.[rowIndex];
+        const instanceObjects = row.objects;
         const setValuesColor = valueSettings.valuesColor.value?.value || "#5e5d5a";
         const adaptiveValuesDefault = setValuesColor === "#5e5d5a" && rowTheme === "dark"
             ? surfaceTokens("dark").text : setValuesColor;
