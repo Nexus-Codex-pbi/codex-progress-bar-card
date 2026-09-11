@@ -122,6 +122,12 @@ export class Visual implements IVisual {
     private licenseGate: LicenseGate;
 
     private lastUpdateOptions: VisualUpdateOptions | null = null;
+    private destroyed = false;
+    private rowListeners: Array<() => void> = [];
+    private readonly onContextMenu = (e: MouseEvent): void => {
+        this.selectionManager.showContextMenu({}, { x: e.clientX, y: e.clientY });
+        e.preventDefault();
+    };
 
 
     constructor(options: VisualConstructorOptions) {
@@ -145,10 +151,7 @@ export class Visual implements IVisual {
         this.colorPalette = options.host.colorPalette as ISandboxExtendedColorPalette;
 
         // Context menu on right-click
-        this.target.addEventListener("contextmenu", (e: MouseEvent) => {
-            this.selectionManager.showContextMenu({}, { x: e.clientX, y: e.clientY });
-            e.preventDefault();
-        });
+        this.target.addEventListener("contextmenu", this.onContextMenu);
 
         // Create scrollable container
         this.container = document.createElement("div");
@@ -166,6 +169,7 @@ export class Visual implements IVisual {
     }
 
     public update(options: VisualUpdateOptions): void {
+        if (this.destroyed) return;
         this.events.renderingStarted(options);
         this.lastUpdateOptions = options;
 
@@ -1126,7 +1130,7 @@ export class Visual implements IVisual {
 
         // Tooltip on hover
         rowEl.style.cursor = "pointer";
-        rowEl.addEventListener("mousemove", (e: MouseEvent) => {
+        this.listenRow(rowEl, "mousemove", (e: MouseEvent) => {
             const tooltipItems: VisualTooltipDataItem[] = [
                 { displayName: "Category", value: row.category },
                 { displayName: "Current", value: this.formatReading(row.currentValue, row.currentFormat, true) },
@@ -1143,23 +1147,23 @@ export class Visual implements IVisual {
                 identities: row.selectionId ? [row.selectionId] : []
             });
         });
-        rowEl.addEventListener("mouseleave", () => {
+        this.listenRow(rowEl, "mouseleave", () => {
             this.tooltipService.hide({ isTouchEvent: false, immediately: false });
         });
 
         // Cross-filtering on click
-        rowEl.addEventListener("contextmenu", (e: MouseEvent) => {
+        this.listenRow(rowEl, "contextmenu", (e: MouseEvent) => {
             this.selectionManager.showContextMenu(row.selectionId || {}, { x: e.clientX, y: e.clientY });
             e.preventDefault();
             e.stopPropagation();
         });
-        rowEl.addEventListener("click", (e: MouseEvent) => {
+        this.listenRow(rowEl, "click", (e: MouseEvent) => {
             if (row.selectionId) {
                 this.selectionManager.select(row.selectionId, e.ctrlKey || e.metaKey);
             }
             e.stopPropagation();
         });
-        rowEl.addEventListener("keydown", (e: KeyboardEvent) => {
+        this.listenRow(rowEl, "keydown", (e: KeyboardEvent) => {
             if (e.key === "Enter" || e.key === " ") {
                 if (row.selectionId) this.selectionManager.select(row.selectionId, e.ctrlKey || e.metaKey);
             } else if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) {
@@ -1173,6 +1177,17 @@ export class Visual implements IVisual {
         });
 
         return rowEl;
+    }
+
+    private listenRow<K extends keyof HTMLElementEventMap>(
+        element: HTMLElement, type: K, listener: (event: HTMLElementEventMap[K]) => void
+    ): void {
+        element.addEventListener(type, listener);
+        this.rowListeners.push(() => element.removeEventListener(type, listener));
+    }
+
+    private releaseRowListeners(): void {
+        this.rowListeners.splice(0).forEach(remove => remove());
     }
 
     private inkOn(surface: string, preferred: string): string {
@@ -1261,14 +1276,20 @@ export class Visual implements IVisual {
     }
 
     public destroy(): void {
+        if (this.destroyed) return;
+        this.destroyed = true;
         // Drop the in-flight licence check FIRST: its redraw callback replays
         // update() against a torn-down target otherwise (NEXUS lifecycle finding).
         this.licenseGate.dispose();
+        this.lastUpdateOptions = null;
+        this.releaseRowListeners();
+        this.target?.removeEventListener("contextmenu", this.onContextMenu);
+        this.lastPctByCategory.clear();
+        this.fixedColorHelper = null;
+        this.valuesColorHelper = null;
         this.cornerSignature?.destroy();
         this.cornerSignature = null;
-        while (this.container && this.container.firstChild) {
-            this.container.removeChild(this.container.firstChild);
-        }
+        this.container?.remove();
         this.container = null;
         this.target = null;
     }
