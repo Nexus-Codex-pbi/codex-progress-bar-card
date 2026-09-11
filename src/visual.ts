@@ -40,7 +40,6 @@ interface BarRow {
     currentValue: number;
     maxValue: number;
     label: string | null;
-    percentage: number;
     sortOrder: number | null;
     selectionId: ISelectionId | null;
     /** The per-instance object overrides (fx / "set for this row" swatches)
@@ -611,7 +610,6 @@ export class Visual implements IVisual {
             // a zero maximum already was (NEXUS cycle-10 §4).
             if (current === null || max === null || !(max > 0)) continue;
 
-            const percentage = clamp((current / max) * 100, 0, 100);
             const labelValue = labelCol ? labelCol.values[i] : null;
             const sortValue = sortOrderCol ? safeNumber(sortOrderCol.values[i]) : null;
 
@@ -624,7 +622,13 @@ export class Visual implements IVisual {
                 currentValue: current,
                 maxValue: max,
                 label: labelValue != null ? String(labelValue) : null,
-                percentage,
+                // NB: no `percentage` field. It used to hold
+                // clamp((current/max)*100, 0, 100) and was read by nothing —
+                // the row's percentage TEXT is derived truthfully at render
+                // time (§4) and the bar's geometry clamps separately. Leaving
+                // a pre-clamped 0-100 number on the row invited a future
+                // reader to render the lie again, so the field is gone
+                // rather than merely unclamped.
                 sortOrder: sortValue,
                 selectionId,
                 // Bind the per-instance overrides to the row's own identity
