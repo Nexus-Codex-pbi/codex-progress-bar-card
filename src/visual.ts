@@ -243,14 +243,14 @@ export class Visual implements IVisual {
 
             const dataView: DataView = options.dataViews?.[0];
             if (!dataView?.categorical?.categories?.[0]?.values?.length) {
-                this.renderEmptyState();
+                this.renderEmptyState(hc);
                 this.events.renderingFinished(options);
                 return;
             }
 
             const rows = this.parseData(dataView);
             if (rows.length === 0) {
-                this.renderEmptyState();
+                this.renderEmptyState(hc);
                 this.events.renderingFinished(options);
                 return;
             }
@@ -1037,7 +1037,7 @@ export class Visual implements IVisual {
     }
 
     /** Render empty state placeholder */
-    private renderEmptyState(): void {
+    private renderEmptyState(hc: ReturnType<typeof applyHighContrast>): void {
         this.container.className = "progress-bar-card-container";
         const empty = document.createElement("div");
         empty.className = "progress-empty";
@@ -1070,7 +1070,24 @@ export class Visual implements IVisual {
         }
 
         this.container.appendChild(empty);
-        applyCardSignature(this.cornerSignature, this.formattingSettings?.cardSignature, { autoHex: "#00d9ff", mirror: true, muted: true });
+        // The empty state re-applies the signature AFTER update()'s own
+        // high-contrast-aware call (~:221), so omitting hcActive/hcColor here
+        // silently overwrote the resolved foreground with the muted brand
+        // violet: measured rgb(143, 138, 184) at opacity 0.4 on a black
+        // high-contrast page, while the populated card correctly painted
+        // rgb(255, 255, 255). Route the same palette the rest of the empty
+        // state already uses (iconEl/textEl above) — the resolver's own
+        // "high contrast outranks muted" branch (cardSignatureSettings.ts)
+        // cannot fire unless hcActive reaches it. glowMix 0 keeps high
+        // contrast glow-free exactly as update() does.
+        applyCardSignature(this.cornerSignature, this.formattingSettings?.cardSignature, {
+            autoHex: "#00d9ff",
+            hcActive: hc.active,
+            hcColor: hc.color,
+            mirror: true,
+            glowMix: 0,
+            muted: true,
+        });
         this.cornerSignature?.elements.forEach((el) => this.container.appendChild(el));
     }
 
