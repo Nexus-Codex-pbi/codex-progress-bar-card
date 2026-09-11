@@ -70,7 +70,7 @@ const TICK_PCT = (100 / SCALE) * 100; // 83.33%
 // never had — see the pctText derivation in renderRow (NEXUS cycle-10 §4).
 const PCT_DISPLAY_LIMIT = 999;
 const QUANTISED_BLOCKS = 24;
-const GRID_TEMPLATE = "90px 1fr 96px";
+const MIN_TRACK_WIDTH = 80;
 
 // Luminance-based theme pick now comes from the shared surfaceTone() helper
 // (src/shared/colorHelpers.ts) — same Rec.601 weights and same 0.55
@@ -101,6 +101,13 @@ export class Visual implements IVisual {
     private valuesColorHelper: ColorHelper | null = null;
     private layoutMode: string = "list";
     private themeBaseHex: string = "#ffffff";
+    private compactRows = false;
+    private valuesWidth = 96;
+    private trackWidth = 0;
+
+    private get gridTemplate(): string {
+        return this.compactRows ? "minmax(0, 1fr)" : `90px minmax(0, 1fr) ${this.valuesWidth}px`;
+    }
 
     // v3 card signature — one corner-bracket pair for the whole card
     // (the board tints it with the brand cyan accent, not a per-row band —
@@ -311,24 +318,36 @@ export class Visual implements IVisual {
                 ? "progress-bar-card-container layout-grid"
                 : "progress-bar-card-container layout-list";
 
-            // Adjust grid columns based on viewport width
-            if (layout === "grid") {
-                const width = options.viewport.width;
-                const userCols = barSettings.gridColumns?.value ?? 0;
-                const cols = userCols > 0
-                    ? Math.min(6, Math.max(1, Math.round(userCols)))
-                    : (width >= 800 ? 3 : width >= 480 ? 2 : 1);
-                this.container.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
-            } else {
-                this.container.style.gridTemplateColumns = "";
+            const axis = this.formattingSettings.axisSettingsCard;
+            const values = this.formattingSettings.valueSettingsCard;
+            const yGutter = axis.showAxisTitles.value && axis.yAxisTitle.value ? (values.fontSize.value || 12) + 8 : 0;
+            const availableWidth = Math.max(0, this.container.clientWidth - 24 - yGutter);
+            const userCols = barSettings.gridColumns?.value ?? 0;
+            const cols = layout === "grid" ? (userCols > 0
+                ? Math.min(6, Math.max(1, Math.round(userCols)))
+                : Math.max(1, Math.min(6, Math.floor((availableWidth + 10) / 350)))) : 1;
+            this.container.style.gridTemplateColumns = "";
+            const rowWidth = Math.max(0, (availableWidth - (cols - 1) * 10) / cols - (layout === "grid" ? 22 : 0));
+            const context = document.createElement("canvas").getContext("2d");
+            const valueSize = values.valuesFontSize.value > 0 ? values.valuesFontSize.value : values.fontSize.value || 12;
+            if (context) context.font = `${values.valuesItalic.value ? "italic " : ""}${values.valuesBold.value ? "700" : "400"} ${valueSize}px ${values.valuesFontFamily.value || "Segoe UI"}`;
+            this.valuesWidth = 96;
+            if (values.showValues.value && context) {
+                for (const row of rows) {
+                    const text = `${this.formatReading(row.currentValue, row.currentFormat)} / ${this.formatReading(row.maxValue, row.maxFormat, true)}`;
+                    this.valuesWidth = Math.max(this.valuesWidth, Math.ceil(context.measureText(text).width) + 10);
+                }
             }
+            this.valuesWidth = Math.min(280, this.valuesWidth);
+            this.compactRows = rowWidth - 118 - this.valuesWidth < MIN_TRACK_WIDTH;
+            this.trackWidth = this.compactRows ? rowWidth : rowWidth - 118 - this.valuesWidth;
 
             // ─── v2 header row (list layout only): "Segment" / "Actual /
             // target" captions above the row list, matching the board's
             // .prow.phead — the design's own "axis + titles" ask. Skipped
             // in grid layout, which has no equivalent in the design board
             // (each row is already its own mini-card there).
-            if (layout === "list") {
+            if (layout === "list" && !this.compactRows) {
                 this.container.appendChild(this.renderHeaderRow(theme, hc.active ? hc.color : null));
             }
 
@@ -336,12 +355,17 @@ export class Visual implements IVisual {
             // v2 vertical gridlines overlay (list layout only) can sit
             // BEHIND every row's (opaque) track. ─────────────────────────
             const rowsWrap = document.createElement("div");
+            rowsWrap.className = "progress-rows";
             rowsWrap.style.position = "relative";
+            rowsWrap.style.minWidth = "0";
+            rowsWrap.style.flexShrink = "0";
             if (layout === "grid") {
-                rowsWrap.style.display = "contents";
+                rowsWrap.style.display = "grid";
+                rowsWrap.style.gridTemplateColumns = `repeat(${cols}, minmax(0, 1fr))`;
+                rowsWrap.style.gap = "10px";
             }
 
-            if (layout === "list") {
+            if (layout === "list" && !this.compactRows) {
                 rowsWrap.appendChild(this.renderGridlines(theme));
             }
 
@@ -375,13 +399,14 @@ export class Visual implements IVisual {
 
                 // Wrap existing content for Y axis title
                 if (yAxisTitle) {
-                    const existingChildren = Array.from(this.container.children);
+                    const existingChildren = Array.from(this.container.children).filter(child => !child.classList.contains("progress-bar-card-title"));
                     const wrapper = document.createElement("div");
                     wrapper.style.display = "flex";
                     wrapper.style.flexDirection = "row";
                     wrapper.style.alignItems = "stretch";
                     wrapper.style.width = "100%";
-                    wrapper.style.height = "100%";
+                    wrapper.style.minWidth = "0";
+                    wrapper.style.flexShrink = "0";
 
                     const yTitleEl = document.createElement("div");
                     yTitleEl.style.display = "flex";
@@ -400,7 +425,9 @@ export class Visual implements IVisual {
                     const innerContainer = document.createElement("div");
                     innerContainer.style.flex = "1";
                     innerContainer.style.minWidth = "0";
-                    innerContainer.style.overflow = "auto";
+                    innerContainer.style.display = "flex";
+                    innerContainer.style.flexDirection = "column";
+                    innerContainer.style.gap = "6px";
                     for (const child of existingChildren) {
                         innerContainer.appendChild(child);
                     }
@@ -416,6 +443,7 @@ export class Visual implements IVisual {
                     xTitleEl.style.color = titleColor;
                     xTitleEl.style.fontFamily = "Segoe UI, Tahoma, Geneva, Verdana, sans-serif";
                     xTitleEl.style.paddingTop = "6px";
+                    xTitleEl.style.overflowWrap = "anywhere";
                     xTitleEl.textContent = xAxisTitle;
                     this.container.appendChild(xTitleEl);
                 }
@@ -461,6 +489,11 @@ export class Visual implements IVisual {
             titleEl.style.color = this.isHighContrast ? this.colorPalette.foreground.value : adaptiveTitle;
         }
         titleEl.style.padding = "8px 10px 0";
+        titleEl.style.boxSizing = "border-box";
+        titleEl.style.maxWidth = "100%";
+        titleEl.style.minWidth = "0";
+        titleEl.style.flexShrink = "0";
+        titleEl.style.overflowWrap = "anywhere";
         // Grid layout mode sets `display:grid` directly on this.container
         // (see barSettings.layout === "grid" in update()) — span all
         // columns so the title renders as its own full-width row instead
@@ -477,7 +510,7 @@ export class Visual implements IVisual {
         const row = document.createElement("div");
         row.className = "pbc-phead";
         row.style.display = "grid";
-        row.style.gridTemplateColumns = GRID_TEMPLATE;
+        row.style.gridTemplateColumns = this.gridTemplate;
         row.style.gap = "14px";
         row.style.alignItems = "end";
         row.style.marginBottom = "10px";
@@ -488,7 +521,7 @@ export class Visual implements IVisual {
         segLabel.textContent = "Segment";
         segLabel.style.fontSize = "10px";
         segLabel.style.fontWeight = "700";
-        segLabel.style.letterSpacing = "0.12em";
+        segLabel.style.letterSpacing = "0";
         segLabel.style.textTransform = "uppercase";
         segLabel.style.color = muted;
         segLabel.style.opacity = "1";
@@ -501,7 +534,7 @@ export class Visual implements IVisual {
         valLabel.textContent = "Actual / target";
         valLabel.style.fontSize = "10px";
         valLabel.style.fontWeight = "700";
-        valLabel.style.letterSpacing = "0.12em";
+        valLabel.style.letterSpacing = "0";
         valLabel.style.textTransform = "uppercase";
         valLabel.style.color = muted;
         valLabel.style.opacity = "1";
@@ -522,7 +555,7 @@ export class Visual implements IVisual {
         const overlay = document.createElement("div");
         overlay.style.position = "absolute";
         overlay.style.left = "104px"; // 90px label col + 14px gap
-        overlay.style.right = "110px"; // 96px value col + 14px gap
+        overlay.style.right = `${this.valuesWidth + 14}px`;
         overlay.style.top = "0";
         overlay.style.bottom = "0";
         overlay.style.pointerEvents = "none";
@@ -547,22 +580,25 @@ export class Visual implements IVisual {
     private renderAxisRow(theme: Theme): HTMLElement {
         const row = document.createElement("div");
         row.style.position = "relative";
-        row.style.margin = "8px 110px 0 104px";
+        row.style.margin = this.compactRows ? "8px 0 0" : `8px ${this.valuesWidth + 14}px 0 104px`;
         row.style.height = "16px";
+        row.style.flexShrink = "0";
 
         const muted = this.isHighContrast ? this.colorPalette.foreground.value : this.mutedOn(this.themeBaseHex);
-        for (let v = 0; v <= SCALE; v += 20) {
+        const step = this.trackWidth < 180 ? (this.trackWidth < 60 ? SCALE : 60) : 20;
+        for (let v = 0; v <= SCALE; v += step) {
             const label = document.createElement("span");
             label.textContent = String(v);
             label.style.position = "absolute";
             label.style.left = `${(v / SCALE) * 100}%`;
-            label.style.transform = "translateX(-50%)";
+            label.style.transform = v === 0 ? "" : v === SCALE ? "translateX(-100%)" : "translateX(-50%)";
             label.style.fontSize = "10.5px";
             label.style.fontWeight = "600";
             label.style.color = muted;
             label.style.fontFeatureSettings = TABULAR_NUMS;
             row.appendChild(label);
         }
+        if (this.trackWidth < 40) row.style.display = "none";
         return row;
     }
 
@@ -571,10 +607,11 @@ export class Visual implements IVisual {
         const cap = document.createElement("div");
         cap.textContent = "% OF TARGET";
         cap.style.textAlign = "center";
-        cap.style.margin = "2px 110px 0 104px";
+        cap.style.margin = this.compactRows ? "2px 0 0" : `2px ${this.valuesWidth + 14}px 0 104px`;
         cap.style.fontSize = "10.5px";
         cap.style.fontWeight = "700";
-        cap.style.letterSpacing = "0.1em";
+        cap.style.letterSpacing = "0";
+        cap.style.overflowWrap = "anywhere";
         cap.style.color = hcColor || this.mutedOn(this.themeBaseHex);
         return cap;
     }
@@ -721,10 +758,10 @@ export class Visual implements IVisual {
         const zoneSettings = this.formattingSettings.zoneSettingsCard;
         const valueSettings = this.formattingSettings.valueSettingsCard;
 
-        const barHeight = barSettings.barHeight.value ?? 12;
-        const barRadius = barSettings.barRadius.value ?? 6;
-        const rowHeight = barSettings.rowHeight.value ?? 48;
-        const fontSize = valueSettings.fontSize.value ?? 12;
+        const barHeight = Math.max(1, barSettings.barHeight.value ?? 12);
+        const barRadius = Math.max(0, barSettings.barRadius.value ?? 6);
+        const rowHeight = Math.max(0, barSettings.rowHeight.value ?? 48);
+        const fontSize = Math.max(1, valueSettings.fontSize.value ?? 12);
 
         // High contrast overrides (pre-existing convention, unchanged)
         const hcFg = this.isHighContrast ? this.colorPalette.foreground.value : null;
@@ -858,6 +895,7 @@ export class Visual implements IVisual {
         rowEl.style.flexDirection = "column";
         rowEl.style.gap = "3px";
         rowEl.style.minHeight = `${rowHeight}px`;
+        rowEl.style.minWidth = "0";
         rowEl.style.fontSize = `${fontSize}px`;
         if (hc.active) rowEl.style.borderColor = hc.color;
         if (rowBg && rowBg.length > 0) {
@@ -872,8 +910,9 @@ export class Visual implements IVisual {
 
         const grid = document.createElement("div");
         grid.style.display = "grid";
-        grid.style.gridTemplateColumns = GRID_TEMPLATE;
-        grid.style.gap = "14px";
+        grid.style.gridTemplateColumns = this.gridTemplate;
+        grid.style.gap = this.compactRows ? "8px" : "14px";
+        grid.style.minWidth = "0";
         grid.style.alignItems = "center";
 
         // Category label (right-aligned, matching the board's .plab)
@@ -886,7 +925,7 @@ export class Visual implements IVisual {
         categoryEl.style.fontWeight = categoryWeight;
         categoryEl.style.fontStyle = categoryStyle;
         categoryEl.style.textDecoration = categoryDecoration;
-        categoryEl.style.textAlign = "right";
+        categoryEl.style.textAlign = this.compactRows ? "left" : "right";
         categoryEl.style.whiteSpace = "nowrap";
         categoryEl.style.overflow = "hidden";
         categoryEl.style.textOverflow = "ellipsis";
@@ -897,6 +936,8 @@ export class Visual implements IVisual {
         track.className = "progress-track";
         track.style.position = "relative";
         track.style.height = `${barHeight}px`;
+        track.style.boxSizing = "border-box";
+        track.style.minWidth = "0";
         track.style.borderRadius = `${barRadius}px`;
         track.style.background = quantised ? "none" : trackColor;
         if (hc.active) {
@@ -911,13 +952,15 @@ export class Visual implements IVisual {
             blocksEl.style.top = "0";
             blocksEl.style.bottom = "0";
             blocksEl.style.display = "flex";
-            blocksEl.style.gap = "3px";
+            blocksEl.style.gap = "min(3px, 2%)";
             for (let i = 0; i < QUANTISED_BLOCKS; i++) {
                 const pos = ((i + 0.5) / QUANTISED_BLOCKS) * SCALE;
                 const on = pos <= rawPct;
                 const over = on && pos > 100;
                 const block = document.createElement("span");
-                block.style.flex = "1";
+                block.style.flex = "1 1 0";
+                block.style.minWidth = "0";
+                block.style.boxSizing = "border-box";
                 block.style.borderRadius = "2px";
                 if (!on) {
                     block.style.background = hc.active ? "transparent" : trackColor;
@@ -993,8 +1036,13 @@ export class Visual implements IVisual {
         valueWrap.style.textAlign = "right";
         // Breathing room against the row's right edge — visible whenever a
         // row background makes the edge a hard line (Neil 2026-07-13).
-        valueWrap.style.paddingRight = "10px";
+        valueWrap.style.paddingRight = this.compactRows ? "0" : "10px";
         valueWrap.style.boxSizing = "border-box";
+        valueWrap.style.minWidth = "0";
+        valueWrap.style.overflowWrap = "anywhere";
+        if (this.compactRows) {
+            valueWrap.style.textAlign = "left";
+        }
 
         // Bounded geometry, truthful text (NEXUS cycle-10 §4). The track only
         // draws to the 120% scale, but the label must not assert a figure the
