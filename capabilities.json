@@ -119,6 +119,21 @@
                     },
                     "displayName": "Color Mode"
                 },
+                "maxValueMeaning": {
+                    "type": {
+                        "enumeration": [
+                            {
+                                "displayName": "Goal",
+                                "value": "goal"
+                            },
+                            {
+                                "displayName": "Limit",
+                                "value": "limit"
+                            }
+                        ]
+                    },
+                    "displayName": "Max Value is"
+                },
                 "fixedColor": {
                     "type": {
                         "fill": {

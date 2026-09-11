@@ -125,6 +125,24 @@ class ZoneSettingsCard extends FormattingSettingsCard {
         value: { displayName: "Zoned", value: "zoned" }
     });
 
+    // Goal versus limit, stated explicitly (NEXUS cycle-10 §1). The bar's
+    // colour law needs to know what the Max Value MEANS before it can judge
+    // a reading against it: reaching a goal is good, reaching a limit is
+    // not. "Goal" is the default and is exactly the behaviour every shipped
+    // report already has — at/over Max is the safe colour. "Limit" mirrors
+    // the same two thresholds so a capacity reading over its rated maximum
+    // reads as danger instead of success.
+    maxValueMeaning = new formattingSettings.ItemDropdown({
+        name: "maxValueMeaning",
+        displayName: "Max Value is",
+        description: "Goal: higher is better, reaching Max is good. Limit: Max is a ceiling, reaching it is bad",
+        items: [
+            { displayName: "Goal", value: "goal" },
+            { displayName: "Limit", value: "limit" }
+        ],
+        value: { displayName: "Goal", value: "goal" }
+    });
+
     fixedColor = new formattingSettings.ColorPicker({
         name: "fixedColor",
         displayName: "Fixed Colour",
@@ -133,26 +151,29 @@ class ZoneSettingsCard extends FormattingSettingsCard {
         instanceKind: ConstantOrRule
     });
 
-    // v2 board look (Plan 16): "Zoned" mode's colour selection now routes
-    // through the shared band(value,target) ratio law (>=100% success,
-    // >=90% warning, else danger — see bandEngine.ts) rather than these
-    // percentage-of-max thresholds, so every v2 visual reads the same
-    // "on/near/below target" language. safeMax/warningMax remain in the
-    // format pane (zero schema churn) but are no longer read by the v2
-    // render path — safeColor/warningColor/dangerColor below ARE still
-    // fully honoured (D-16), only the threshold VALUES are superseded.
+    // MIGRATION (NEXUS cycle-10 §1). The v2 board look replaced these two
+    // controls with the shared band(value,target) ratio law and left them
+    // editable but inert: the pane offered 60 and 25 while the renderer
+    // judged every row at 90 and 100, so an edit changed nothing. They are
+    // read again by the render path, and their DEFAULTS now state the law
+    // that has actually been shipping — 100 and 90 — so an untouched report
+    // renders exactly the colours it renders today and a report that DID
+    // move a threshold finally gets what it asked for. Direction comes from
+    // maxValueMeaning above: Goal reads at/over the upper threshold as safe,
+    // Limit reads it as danger. safeColor/warningColor/dangerColor are
+    // unchanged and still fully honoured (D-16).
     safeMax = new formattingSettings.NumUpDown({
         name: "safeMax",
-        displayName: "Warning → Safe (%)",
-        description: "Fill percentage above which bar turns safe (green)",
-        value: 60
+        displayName: "Upper Threshold (%)",
+        description: "Percentage of Max at or above which a Goal is met (green) — or a Limit is breached (red)",
+        value: 100
     });
 
     warningMax = new formattingSettings.NumUpDown({
         name: "warningMax",
-        displayName: "Danger → Warning (%)",
-        description: "Fill percentage above which bar turns warning (amber)",
-        value: 25
+        displayName: "Lower Threshold (%)",
+        description: "Percentage of Max at or above which the bar enters the warning band (amber)",
+        value: 90
     });
 
     safeColor = new formattingSettings.ColorPicker({
@@ -183,6 +204,7 @@ class ZoneSettingsCard extends FormattingSettingsCard {
     displayName: string = "Zone Settings";
     slices: Array<FormattingSettingsSlice> = [
         this.colorMode,
+        this.maxValueMeaning,
         this.fixedColor,
         this.safeMax,
         this.warningMax,

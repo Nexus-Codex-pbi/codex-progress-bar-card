@@ -25,7 +25,11 @@ import { toRgba, compositeOver, surfaceTone } from "./shared/colorHelpers";
 import { clamp, safeNumber, CODEX_TOKENS } from "./utils";
 
 // v3 appearance engine (frozen, Plan 15) — the KPI-family v2 look.
-import { Band, Theme, band, bandColor, targetToken } from "./shared/bandEngine";
+// `band()` itself is deliberately NOT imported: this visual judges a row with
+// zoneBand() below, which honours the exposed thresholds and the Goal/Limit
+// meaning (NEXUS cycle-10 §1). The Band type and the shared colour tokens are
+// unchanged.
+import { Band, Theme, bandColor, targetToken } from "./shared/bandEngine";
 import { surfaceTokens, mix, accentBarGradient, TABULAR_NUMS } from "./shared/designTokens";
 import { applyBorder } from "./shared/borderSettings";
 import { makeCornerBrackets, CardSignatureHandle } from "./shared/cardSignature";
@@ -652,6 +656,51 @@ export class Visual implements IVisual {
         return rows;
     }
 
+    /**
+     * zoneBand(current, max, zoneSettings): the Zoned colour law.
+     *
+     * Replaces the shared `band(value, target)` call for this visual, which
+     * hard-coded both the boundaries (90 / 100) and the direction, leaving
+     * the exposed "Upper/Lower Threshold (%)" controls inert (NEXUS cycle-10
+     * §1). Here the thresholds ARE the boundaries and `maxValueMeaning`
+     * states the direction:
+     *
+     *   Goal  (default) — higher is better. >= upper -> success,
+     *                     >= lower -> warning, else danger.
+     *   Limit           — Max is a ceiling. >= upper -> danger,
+     *                     >= lower -> warning, else success.
+     *
+     * The two modes are exact mirrors of one another over the same two
+     * numbers. With the shipped defaults (upper 100, lower 90) Goal is the
+     * law this visual already renders, so an untouched report is unchanged;
+     * Limit is what a rated-capacity story needs, so 224/200 reads danger
+     * instead of the success colour.
+     *
+     * A row only reaches this method with a finite current and a max > 0
+     * (parseData rejects the rest, §4), so there is no non-positive-target
+     * special case to make here. Non-finite threshold input falls back to
+     * the shipped defaults rather than poisoning the comparison.
+     */
+    private zoneBand(
+        current: number,
+        max: number,
+        zoneSettings: VisualFormattingSettingsModel["zoneSettingsCard"]
+    ): Band {
+        const threshold = (raw: number | undefined, fallback: number): number =>
+            Number.isFinite(raw) ? (raw as number) : fallback;
+        const upper = threshold(zoneSettings.safeMax.value, 100);
+        const lower = threshold(zoneSettings.warningMax.value, 90);
+        const percent = (current / max) * 100;
+        if ((zoneSettings.maxValueMeaning.value?.value || "goal") === "limit") {
+            if (percent >= upper) return "danger";
+            if (percent >= lower) return "warning";
+            return "success";
+        }
+        if (percent >= upper) return "success";
+        if (percent >= lower) return "warning";
+        return "danger";
+    }
+
     /** Render a single progress bar row — v2 board look: 90px label /
      *  1fr track (120%-scaled, violet target-in-track tick, brightening
      *  overflow, optional quantised LED blocks) / 96px band-tinted value
@@ -745,17 +794,27 @@ export class Visual implements IVisual {
         // ─── v3 band engine: ONE colour token for the fill/tick/value ──
         // "Fixed" colour mode keeps its own literal override untouched
         // (existing TRANS-04 fx wiring, unchanged semantics — no band
-        // applies). "Zoned" mode's fill/value colour now routes through
-        // the shared band(value,target) ratio law (>=100% success, >=90%
-        // warning, else danger) — matching every other v2 visual and the
-        // board's own note ("thresholds: >=100% green, >=90% amber, below
-        // red — all fx-overridable") — resolved against the EXISTING
-        // safeColor/warningColor/dangerColor pickers so a user's custom
-        // colours still resolve (D-16). The legacy safeMax/warningMax
-        // percentage-of-max thresholds are superseded by this shared
-        // ratio law under the v2 default (documented deviation — see
-        // Summary "Deviations"); they remain in the format pane but are no
-        // longer read by this render path.
+        // applies). "Zoned" mode resolves its fill/value colour against the
+        // EXISTING safeColor/warningColor/dangerColor pickers so a user's
+        // custom colours still resolve (D-16).
+        //
+        // The v2 look replaced the exposed safeMax/warningMax thresholds
+        // with the shared band(value,target) ratio law and left the controls
+        // editable but INERT: the pane offered 60 and 25 while every row was
+        // judged at 90 and 100, so editing them changed nothing (NEXUS
+        // cycle-10 §1). They are read again here, through zoneBand() below.
+        // Their DEFAULTS now state the law that has actually been shipping —
+        // 100 and 90 — so an untouched report is pixel-identical and only a
+        // report that really moved a threshold changes.
+        //
+        // shared band() is no longer the call for this visual because it
+        // hard-codes both the boundaries AND the direction, and a progress
+        // bar's Max is not always a goal: the capacity sample's 224/200
+        // "Over capacity — investigate" row was painted the success colour
+        // by the goal-attainment law. maxValueMeaning states which it is;
+        // Limit mirrors the same two thresholds. bandEngine.ts itself is
+        // shared and frozen — it is not edited, only bypassed for the
+        // threshold-aware path.
         const colorMode = zoneSettings.colorMode.value?.value || "zoned";
         let rowBand: Band | null = null;
         let signalHex: string;
@@ -763,7 +822,7 @@ export class Visual implements IVisual {
             const fixedColorDefault = zoneSettings.fixedColor.value?.value || CODEX_TOKENS.primary;
             signalHex = this.fixedColorHelper?.getColorForMeasure(instanceObjects, "fixedColor") ?? fixedColorDefault;
         } else {
-            rowBand = band(row.currentValue, row.maxValue);
+            rowBand = this.zoneBand(row.currentValue, row.maxValue, zoneSettings);
             const colorFor: Record<Band, { value?: { value?: string } }> = {
                 success: zoneSettings.safeColor,
                 warning: zoneSettings.warningColor,
