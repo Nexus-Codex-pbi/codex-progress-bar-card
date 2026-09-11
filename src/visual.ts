@@ -1144,6 +1144,11 @@ export class Visual implements IVisual {
         });
 
         // Cross-filtering on click
+        rowEl.addEventListener("contextmenu", (e: MouseEvent) => {
+            this.selectionManager.showContextMenu(row.selectionId || {}, { x: e.clientX, y: e.clientY });
+            e.preventDefault();
+            e.stopPropagation();
+        });
         rowEl.addEventListener("click", (e: MouseEvent) => {
             if (row.selectionId) {
                 this.selectionManager.select(row.selectionId, e.ctrlKey || e.metaKey);
