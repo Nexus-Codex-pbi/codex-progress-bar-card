@@ -21,7 +21,7 @@ import { dataViewWildcard } from "powerbi-visuals-utils-dataviewutils";
 import { ColorHelper } from "powerbi-visuals-utils-colorutils";
 
 import { VisualFormattingSettingsModel, alignSelfFor, textAlignFor } from "./settings";
-import { toRgba, compositeOver, surfaceTone } from "./shared/colorHelpers";
+import { toRgba, compositeOver, surfaceTone, contrastInk, contrastRatio, mutedInk } from "./shared/colorHelpers";
 import { clamp, safeNumber, CODEX_TOKENS } from "./utils";
 
 // v3 appearance engine (frozen, Plan 15) — the KPI-family v2 look.
@@ -370,7 +370,7 @@ export class Visual implements IVisual {
                 // Adaptive ink, same law as the category/values text: the
                 // #1a1a1a literal stayed dark-on-dark on a dark report
                 // (NEXUS cycle-10 §6). High contrast still wins outright.
-                const titleColor = hcFg || (theme === "dark" ? surfaceTokens("dark").text : "#1a1a1a");
+                const titleColor = hcFg || this.inkOn(this.themeBaseHex, "#1a1a1a");
 
                 // Wrap existing content for Y axis title
                 if (yAxisTitle) {
@@ -455,8 +455,8 @@ export class Visual implements IVisual {
             // Adaptive default (D-16 sentinel): untouched shared-Title navy
             // swaps to the dark text token on dark surfaces.
             const setTitle = t.titleColor.value.value;
-            const adaptiveTitle = setTitle === "#1a1a2e" && surfaceTone(this.themeBaseHex) === "dark"
-                ? surfaceTokens("dark").text : setTitle;
+            const explicit = this.lastUpdateOptions?.dataViews?.[0]?.metadata?.objects?.titleSettings?.titleColor;
+            const adaptiveTitle = explicit ? setTitle : this.inkOn(this.themeBaseHex, setTitle);
             titleEl.style.color = this.isHighContrast ? this.colorPalette.foreground.value : adaptiveTitle;
         }
         titleEl.style.padding = "8px 10px 0";
@@ -481,7 +481,7 @@ export class Visual implements IVisual {
         row.style.alignItems = "end";
         row.style.marginBottom = "10px";
 
-        const muted = hcColor || surfaceTokens(theme).muted;
+        const muted = hcColor || this.mutedOn(this.themeBaseHex);
 
         const segLabel = document.createElement("span");
         segLabel.textContent = "Segment";
@@ -490,7 +490,7 @@ export class Visual implements IVisual {
         segLabel.style.letterSpacing = "0.12em";
         segLabel.style.textTransform = "uppercase";
         segLabel.style.color = muted;
-        segLabel.style.opacity = "0.85";
+        segLabel.style.opacity = "1";
         segLabel.style.textAlign = "right";
         row.appendChild(segLabel);
 
@@ -503,7 +503,7 @@ export class Visual implements IVisual {
         valLabel.style.letterSpacing = "0.12em";
         valLabel.style.textTransform = "uppercase";
         valLabel.style.color = muted;
-        valLabel.style.opacity = "0.85";
+        valLabel.style.opacity = "1";
         valLabel.style.textAlign = "right";
         valLabel.style.paddingRight = "10px";
         valLabel.style.boxSizing = "border-box";
@@ -549,7 +549,7 @@ export class Visual implements IVisual {
         row.style.margin = "8px 110px 0 104px";
         row.style.height = "16px";
 
-        const muted = surfaceTokens(theme).muted;
+        const muted = this.mutedOn(this.themeBaseHex);
         for (let v = 0; v <= SCALE; v += 20) {
             const label = document.createElement("span");
             label.textContent = String(v);
@@ -574,7 +574,7 @@ export class Visual implements IVisual {
         cap.style.fontSize = "10.5px";
         cap.style.fontWeight = "700";
         cap.style.letterSpacing = "0.1em";
-        cap.style.color = hcColor || surfaceTokens(theme).muted;
+        cap.style.color = hcColor || this.mutedOn(this.themeBaseHex);
         return cap;
     }
 
@@ -741,22 +741,21 @@ export class Visual implements IVisual {
         // outer theme (Neil 2026-07-12: grid panels stayed light on a
         // dark visual, so theme-keyed text vanished).
         const gridPanelHex = theme === "dark" ? surfaceTokens("dark").card : "#faf9f6";
-        const rowSurfaceHex = (rowBg && rowBg.length > 0) ? rowBg
+        const rowSurfaceHex = (rowBg && rowBg.length > 0) ? compositeOver(rowBg, 0, this.themeBaseHex)
             : (this.layoutMode === "grid" ? gridPanelHex : this.themeBaseHex);
-        const rowTheme: Theme = surfaceTone(rowSurfaceHex);
+        const objectOverrides = this.lastUpdateOptions?.dataViews?.[0]?.metadata?.objects?.valueSettings;
 
         // Text settings (adaptive on untouched defaults, per row surface)
         const setCategoryColor = valueSettings.categoryColor.value?.value || "#1a1a1a";
-        const adaptiveCategoryDefault = setCategoryColor === "#1a1a1a" && rowTheme === "dark"
-            ? surfaceTokens("dark").text : setCategoryColor;
+        const adaptiveCategoryDefault = objectOverrides?.categoryColor ? setCategoryColor
+            : this.inkOn(rowSurfaceHex, setCategoryColor);
         const categoryColor = this.isHighContrast ? hcFg : adaptiveCategoryDefault;
         const catFontSize = valueSettings.categoryFontSize.value > 0
             ? valueSettings.categoryFontSize.value : fontSize;
 
         const instanceObjects = row.objects;
         const setValuesColor = valueSettings.valuesColor.value?.value || "#5e5d5a";
-        const adaptiveValuesDefault = setValuesColor === "#5e5d5a" && rowTheme === "dark"
-            ? surfaceTokens("dark").text : setValuesColor;
+        const adaptiveValuesDefault = objectOverrides?.valuesColor ? setValuesColor : this.mutedOn(rowSurfaceHex);
         // ColorHelper.getColorForMeasure falls back to its own constructed
         // default (the card's swatch value) whenever the row carries no
         // override, so `?? adaptiveValuesDefault` could never fire and the
@@ -772,8 +771,7 @@ export class Visual implements IVisual {
         const valFontSize = valueSettings.valuesFontSize.value > 0
             ? valueSettings.valuesFontSize.value : fontSize;
         const setLabelColor = valueSettings.labelColor.value?.value || "#8a8985";
-        const adaptiveLabelDefault = setLabelColor === "#8a8985" && rowTheme === "dark"
-            ? surfaceTokens("dark").muted : setLabelColor;
+        const adaptiveLabelDefault = objectOverrides?.labelColor ? setLabelColor : this.mutedOn(rowSurfaceHex);
         const labelColor = this.isHighContrast ? hcFg : adaptiveLabelDefault;
         const lblFontSize = valueSettings.labelFontSize.value > 0
             ? valueSettings.labelFontSize.value
@@ -1018,7 +1016,7 @@ export class Visual implements IVisual {
             pv.style.lineHeight = "1.2";
             const hasExplicitValuesColor = hasValuesOverride
                 || !!this.lastUpdateOptions?.dataViews?.[0]?.metadata?.objects?.valueSettings?.valuesColor;
-            pv.style.color = hc.active ? hc.color : hasExplicitValuesColor ? resolvedValuesColor : signalHex;
+            pv.style.color = hc.active ? hc.color : hasExplicitValuesColor ? resolvedValuesColor : this.inkOn(rowSurfaceHex, signalHex);
             const glyph = hc.active && rowBand ? `${statusGlyph(rowBand)} ` : "";
             pv.textContent = glyph + pctText;
             valueWrap.appendChild(pv);
@@ -1104,6 +1102,19 @@ export class Visual implements IVisual {
         return rowEl;
     }
 
+    private inkOn(surface: string, preferred: string): string {
+        const ink = contrastInk(surface, "#000000", "#ffffff");
+        for (let step = 0; step <= 10; step++) {
+            const candidate = mix(preferred, ink, step / 10);
+            if (contrastRatio(candidate, surface) >= 4.5) return candidate;
+        }
+        return ink;
+    }
+
+    private mutedOn(surface: string): string {
+        return mutedInk(contrastInk(surface, "#000000", "#ffffff"), surface);
+    }
+
     private formatReading(value: number, format: string | undefined, includeUnit = false): string {
         const settings = this.formattingSettings.valueSettingsCard;
         const prefix = settings.valuePrefix.value || "";
@@ -1148,6 +1159,12 @@ export class Visual implements IVisual {
         if (this.isHighContrast) {
             iconEl.style.color = this.colorPalette.foreground.value;
             textEl.style.color = this.colorPalette.foreground.value;
+        } else {
+            const ink = this.mutedOn(this.themeBaseHex);
+            iconEl.style.color = ink;
+            iconEl.style.opacity = "1";
+            textEl.style.color = ink;
+            [b1, b2, b3].forEach(field => field.style.color = ink);
         }
 
         this.container.appendChild(empty);
