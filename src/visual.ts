@@ -34,7 +34,7 @@ import { surfaceTokens, mix, accentBarGradient, TABULAR_NUMS } from "./shared/de
 import { applyBorder } from "./shared/borderSettings";
 import { makeCornerBrackets, CardSignatureHandle } from "./shared/cardSignature";
 import { applyCardSignature } from "./shared/cardSignatureSettings";
-import { resolveCodexTheme, neonColorFor, neonShadow, ResolvedCodexTheme } from "./shared/codexThemeSettings";
+import { resolveCodexTheme, neonColorFor, neonShadow, ResolvedCodexTheme, flareHexFor } from "./shared/codexThemeSettings";
 import { settle } from "./shared/motion";
 import { applyHighContrast, statusGlyph } from "./shared/highContrast";
 import { LicenseGate } from "./shared/licensing";
@@ -279,6 +279,7 @@ export class Visual implements IVisual {
             // (scope "flare") and the card's glow budget.
             applyCardSignature(this.cornerSignature, this.formattingSettings.cardSignature, {
                 autoHex: neonColorFor("#00d9ff", codex),
+                flareHex: flareHexFor(codex),
                 hcActive: hc.active,
                 hcColor: hc.color,
                 mirror: true,
@@ -1359,6 +1360,7 @@ export class Visual implements IVisual {
         // contrast glow-free exactly as update() does.
         applyCardSignature(this.cornerSignature, this.formattingSettings?.cardSignature, {
             autoHex: "#00d9ff",
+            flareHex: flareHexFor(this.codex),
             hcActive: hc.active,
             hcColor: hc.color,
             mirror: true,
