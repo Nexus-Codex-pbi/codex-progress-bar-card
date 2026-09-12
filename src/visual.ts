@@ -34,7 +34,7 @@ import { surfaceTokens, mix, accentBarGradient, TABULAR_NUMS } from "./shared/de
 import { applyBorder } from "./shared/borderSettings";
 import { makeCornerBrackets, CardSignatureHandle } from "./shared/cardSignature";
 import { applyCardSignature } from "./shared/cardSignatureSettings";
-import { resolveCodexTheme, neonColorFor, neonShadow, ResolvedCodexTheme, flareHexFor } from "./shared/codexThemeSettings";
+import { resolveCodexTheme, neonColorFor, neonShadow, forcedInk, ResolvedCodexTheme, flareHexFor } from "./shared/codexThemeSettings";
 import { settle } from "./shared/motion";
 import { applyHighContrast, statusGlyph } from "./shared/highContrast";
 import { LicenseGate } from "./shared/licensing";
@@ -114,16 +114,6 @@ export class Visual implements IVisual {
 
     private get gridTemplate(): string {
         return this.compactRows ? "minmax(0, 1fr)" : `90px minmax(0, 1fr) ${this.valuesWidth}px`;
-    }
-
-    /** A forced Codex mode (Dark/Light/Neon) OWNS the text inks against its
-     *  OWN composited surface: every "adapt this ink only when the user left
-     *  it at the default" clause becomes "adapt when forced OR default". A
-     *  pane ink a user chose for a white card is not a choice about the Codex
-     *  dark surface. Accent / band / fx colours are NOT inks and stay the
-     *  user's. Auto (and therefore high contrast) keeps every pane ink. */
-    private get inkOverride(): boolean {
-        return !!this.codex && this.codex.mode !== "auto";
     }
 
     // v3 card signature — one corner-bracket pair for the whole card
@@ -532,10 +522,12 @@ export class Visual implements IVisual {
             // swaps to the dark text token on dark surfaces.
             const setTitle = t.titleColor.value.value;
             const explicit = this.lastUpdateOptions?.dataViews?.[0]?.metadata?.objects?.titleSettings?.titleColor;
-            // Adapt when the Codex mode is FORCED or when the user left the
-            // default (#819) — a forced surface owns the title ink.
-            const adaptiveTitle = explicit && !this.inkOverride
-                ? setTitle : this.inkOn(this.themeBaseHex, setTitle);
+            // #819 rule 3: Auto keeps the user's ink; a forced mode takes the
+            // mode default when the pane is still at its default, and KEEPS an
+            // explicitly chosen ink whenever it still reads on the forced
+            // surface — the one shared rule (forcedInk), not a local one.
+            const adaptiveTitle = forcedInk(
+                setTitle, this.inkOn(this.themeBaseHex, setTitle), this.codex, !explicit);
             titleEl.style.color = this.isHighContrast ? this.colorPalette.foreground.value : adaptiveTitle;
         }
         titleEl.style.padding = "8px 10px 0";
@@ -813,6 +805,7 @@ export class Visual implements IVisual {
         const barSettings = this.formattingSettings.barSettingsCard;
         const zoneSettings = this.formattingSettings.zoneSettingsCard;
         const valueSettings = this.formattingSettings.valueSettingsCard;
+        const codex = this.codex;
 
         const barHeight = Math.max(1, barSettings.barHeight.value ?? 12);
         const barRadius = Math.max(0, barSettings.barRadius.value ?? 6);
@@ -825,7 +818,15 @@ export class Visual implements IVisual {
 
         // trackColor/rowBackground semantics are NOT disturbed by the v2
         // look (established constraint) — same resolution as before.
-        const trackColor = this.isHighContrast ? hcBg : (barSettings.trackColor.value?.value || "#eee9dc");
+        //
+        // #819 rule 2: the track is CHROME, not data. Its shipped fill is a
+        // warm light cream authored for a light card, so under a FORCED Codex
+        // mode it takes that mode's own track token instead — the unlit
+        // quantised blocks read the same value and re-tone with it. Auto and
+        // high contrast are untouched; the bar fill (data) stays the user's.
+        const trackColor = this.isHighContrast ? hcBg
+            : codex && codex.mode !== "auto" ? surfaceTokens(codex.theme).track
+                : (barSettings.trackColor.value?.value || "#eee9dc");
         const rowBg = this.isHighContrast ? hcBg : (barSettings.rowBackground.value?.value || "");
 
         // The surface this row's TEXT actually sits on: an explicit row
@@ -840,20 +841,22 @@ export class Visual implements IVisual {
         const objectOverrides = this.lastUpdateOptions?.dataViews?.[0]?.metadata?.objects?.valueSettings;
 
         // Text settings (adaptive on untouched defaults, per row surface)
-        // Each "adapt only on the untouched default" clause below also adapts
-        // when a Codex mode is FORCED (#819) — see the inkOverride getter.
+        // Each ink below runs the ONE shared rule 3 law (#819): Auto keeps the
+        // pane value, a forced mode takes the mode default on an untouched
+        // pane and keeps an explicit ink that still reads on the forced
+        // surface. `forcedInk` is the only place that law lives.
         const setCategoryColor = valueSettings.categoryColor.value?.value || "#1a1a1a";
-        const adaptiveCategoryDefault = objectOverrides?.categoryColor && !this.inkOverride
-            ? setCategoryColor
-            : this.inkOn(rowSurfaceHex, setCategoryColor);
+        const adaptiveCategoryDefault = forcedInk(
+            setCategoryColor, this.inkOn(rowSurfaceHex, setCategoryColor), codex,
+            !objectOverrides?.categoryColor);
         const categoryColor = this.isHighContrast ? hcFg : adaptiveCategoryDefault;
         const catFontSize = valueSettings.categoryFontSize.value > 0
             ? valueSettings.categoryFontSize.value : fontSize;
 
         const instanceObjects = row.objects;
         const setValuesColor = valueSettings.valuesColor.value?.value || "#5e5d5a";
-        const adaptiveValuesDefault = objectOverrides?.valuesColor && !this.inkOverride
-            ? setValuesColor : this.mutedOn(rowSurfaceHex);
+        const adaptiveValuesDefault = forcedInk(
+            setValuesColor, this.mutedOn(rowSurfaceHex), codex, !objectOverrides?.valuesColor);
         // ColorHelper.getColorForMeasure falls back to its own constructed
         // default (the card's swatch value) whenever the row carries no
         // override, so `?? adaptiveValuesDefault` could never fire and the
@@ -869,8 +872,8 @@ export class Visual implements IVisual {
         const valFontSize = valueSettings.valuesFontSize.value > 0
             ? valueSettings.valuesFontSize.value : fontSize;
         const setLabelColor = valueSettings.labelColor.value?.value || "#8a8985";
-        const adaptiveLabelDefault = objectOverrides?.labelColor && !this.inkOverride
-            ? setLabelColor : this.mutedOn(rowSurfaceHex);
+        const adaptiveLabelDefault = forcedInk(
+            setLabelColor, this.mutedOn(rowSurfaceHex), codex, !objectOverrides?.labelColor);
         const labelColor = this.isHighContrast ? hcFg : adaptiveLabelDefault;
         const lblFontSize = valueSettings.labelFontSize.value > 0
             ? valueSettings.labelFontSize.value
@@ -946,14 +949,13 @@ export class Visual implements IVisual {
         // data marks, so they keep their legacy dark-theme `glowMix` budget
         // and never scale with the Glow Strength slider.
         //
-        // The bar itself keeps the user's band / fixed colour: a band colour
-        // is the DATA, and the contract leaves accent/band/data/fx colours
-        // the user's. Only the GLOW is re-hued — flare scope takes the card's
-        // Flare Colour, "All selected colours" glows in the bar's own hue.
-        const codex = this.codex;
+        // The bar keeps the user's band / fixed colour AND glows in that same
+        // hue under every scope (#819 rule 1): a band verdict is SEMANTIC —
+        // danger red, warning amber, good green — so the flare colour must
+        // never restate it. `neonColorFor` is for accents only; the card
+        // signature above is the one accent this visual has.
         const neon = !!codex && codex.neon && !hc.active;
         const neonGlow = codex?.glow ?? 0;
-        const glowHex = codex ? neonColorFor(signalHex, codex) : signalHex;
 
         // ─── 120%-scale target-in-track geometry ───────────────────────
         const rawPct = (row.currentValue / row.maxValue) * 100;
@@ -1052,13 +1054,13 @@ export class Visual implements IVisual {
                 } else if (over) {
                     block.style.background = mix(signalHex, "#ffffff", 0.45);
                     block.style.boxShadow = neon
-                        ? neonShadow(glowHex, neonGlow)
+                        ? neonShadow(signalHex, neonGlow)
                         : glowMix > 0
                             ? `0 0 8px color-mix(in srgb, ${signalHex} 70%, transparent)` : "none";
                 } else {
                     block.style.background = signalHex;
                     block.style.boxShadow = neon
-                        ? neonShadow(glowHex, neonGlow)
+                        ? neonShadow(signalHex, neonGlow)
                         : glowMix > 0
                             ? `0 0 5px color-mix(in srgb, ${signalHex} ${glowMix}%, transparent)` : "none";
                 }
@@ -1080,7 +1082,7 @@ export class Visual implements IVisual {
             } else {
                 fill.style.background = accentBarGradient(signalHex);
                 fill.style.boxShadow = neon
-                    ? neonShadow(glowHex, neonGlow)
+                    ? neonShadow(signalHex, neonGlow)
                     : glowMix > 0
                         ? `0 0 8px color-mix(in srgb, ${signalHex} ${glowMix}%, transparent)` : "none";
             }
@@ -1099,7 +1101,7 @@ export class Visual implements IVisual {
                 } else {
                     over.style.background = `linear-gradient(180deg, #ffffff, ${mix(signalHex, "#ffffff", 0.4)} 60%, ${signalHex})`;
                     over.style.boxShadow = neon
-                        ? neonShadow(glowHex, neonGlow)
+                        ? neonShadow(signalHex, neonGlow)
                         : `0 0 12px color-mix(in srgb, ${signalHex} 75%, transparent)`;
                 }
                 track.appendChild(over);
@@ -1159,18 +1161,19 @@ export class Visual implements IVisual {
             pv.style.fontFeatureSettings = TABULAR_NUMS;
             pv.style.lineHeight = "1.2";
             // A per-row fx / "set for this row" override is a DATA colour and
-            // stays the user's under every mode; the card-level constant is a
-            // pane INK, which a forced Codex mode takes over (#819).
-            const hasExplicitValuesColor = hasValuesOverride
-                || (!this.inkOverride
-                    && !!this.lastUpdateOptions?.dataViews?.[0]?.metadata?.objects?.valueSettings?.valuesColor);
+            // is EXEMPT from the forced-mode override entirely (#819 rule 3);
+            // the card-level constant is a pane INK and runs the shared law,
+            // whose mode default here is the band-derived ink.
             const pctColor = hc.active ? hc.color
-                : hasExplicitValuesColor ? resolvedValuesColor : this.inkOn(rowSurfaceHex, signalHex);
+                : hasValuesOverride ? resolvedValuesColor
+                    : forcedInk(setValuesColor, this.inkOn(rowSurfaceHex, signalHex), codex,
+                        !objectOverrides?.valuesColor);
             pv.style.color = pctColor;
-            // Neon: the row's headline readout flares — in the Flare Colour
-            // under scope "flare", in its own ink under "All selected colours".
+            // Neon: the row's headline readout flares in ITS OWN hue. It is a
+            // band-coloured readout — the verdict restated as a number — so it
+            // is SEMANTIC (#819 rule 1) and the flare colour never tints it.
             // The actual/target sub-value below is body text and never flares.
-            pv.style.textShadow = neon ? neonShadow(neonColorFor(pctColor, codex), neonGlow) : "";
+            pv.style.textShadow = neon ? neonShadow(pctColor, neonGlow) : "";
             const glyph = hc.active && rowBand ? `${statusGlyph(rowBand)} ` : "";
             pv.textContent = glyph + pctText;
             valueWrap.appendChild(pv);
