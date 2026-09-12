@@ -34,7 +34,7 @@ import { surfaceTokens, mix, accentBarGradient, TABULAR_NUMS } from "./shared/de
 import { applyBorder } from "./shared/borderSettings";
 import { makeCornerBrackets, CardSignatureHandle } from "./shared/cardSignature";
 import { applyCardSignature } from "./shared/cardSignatureSettings";
-import { resolveCodexTheme, neonColorFor, neonShadow, forcedInk, ResolvedCodexTheme, flareHexFor } from "./shared/codexThemeSettings";
+import { resolveCodexTheme, neonColorFor, neonShadow, forcedInk, forcedChrome, isFxResolved, ResolvedCodexTheme, flareHexFor } from "./shared/codexThemeSettings";
 import { settle } from "./shared/motion";
 import { applyHighContrast, statusGlyph } from "./shared/highContrast";
 import { LicenseGate } from "./shared/licensing";
@@ -819,14 +819,20 @@ export class Visual implements IVisual {
         // trackColor/rowBackground semantics are NOT disturbed by the v2
         // look (established constraint) — same resolution as before.
         //
-        // #819 rule 2: the track is CHROME, not data. Its shipped fill is a
-        // warm light cream authored for a light card, so under a FORCED Codex
-        // mode it takes that mode's own track token instead — the unlit
-        // quantised blocks read the same value and re-tone with it. Auto and
+        // #819 rule 2, GUARDED (pass 2): the track is CHROME, not data. Its
+        // shipped fill is a warm light cream authored for a light card, so a
+        // FORCED Codex mode re-tones it — but only when the picker is still at
+        // that shipped default. A track colour the user deliberately chose is
+        // KEPT whenever it still separates from the forced surface (≥ 1.3:1 —
+        // a track has to be visible, not readable), so the picker never goes
+        // inert. `forcedChrome` is the one place that law lives. The unlit
+        // quantised blocks read this same value and re-tone with it. Auto and
         // high contrast are untouched; the bar fill (data) stays the user's.
+        const barOverrides = this.lastUpdateOptions?.dataViews?.[0]?.metadata?.objects?.barSettings;
+        const setTrackColor = barSettings.trackColor.value?.value || "#eee9dc";
         const trackColor = this.isHighContrast ? hcBg
-            : codex && codex.mode !== "auto" ? surfaceTokens(codex.theme).track
-                : (barSettings.trackColor.value?.value || "#eee9dc");
+            : forcedChrome(setTrackColor, surfaceTokens(codex?.theme).track, codex,
+                !barOverrides?.trackColor);
         const rowBg = this.isHighContrast ? hcBg : (barSettings.rowBackground.value?.value || "");
 
         // The surface this row's TEXT actually sits on: an explicit row
@@ -857,18 +863,20 @@ export class Visual implements IVisual {
         const setValuesColor = valueSettings.valuesColor.value?.value || "#5e5d5a";
         const adaptiveValuesDefault = forcedInk(
             setValuesColor, this.mutedOn(rowSurfaceHex), codex, !objectOverrides?.valuesColor);
-        // ColorHelper.getColorForMeasure falls back to its own constructed
-        // default (the card's swatch value) whenever the row carries no
-        // override, so `?? adaptiveValuesDefault` could never fire and the
-        // adaptive default above was dead code — the raw actual/target pair
-        // stayed #5e5d5a on a dark report while the category text adapted
-        // (NEXUS cycle-10 §6). Consult the helper only when THIS row really
-        // has a per-instance / fx override.
-        const hasValuesOverride = !!instanceObjects?.["valueSettings"]?.["valuesColor"];
-        const resolvedValuesColor = (hasValuesOverride
-            ? this.valuesColorHelper?.getColorForMeasure(instanceObjects, "valuesColor")
-            : null) ?? adaptiveValuesDefault;
-        const subValueColor = this.isHighContrast ? hcFg : resolvedValuesColor;
+        // #819, pass 2 — ONE suite-wide fx test. A host-evaluated rule and a
+        // pane swatch arrive on the same `valuesColor` field, so the only
+        // signal is that the RESOLVED colour differs from the pane's static
+        // value: `isFxResolved` is that test, and it replaces this repo's
+        // local `hasValuesOverride` presence idiom. ColorHelper.getColorForMeasure
+        // returns its constructed default (the card's swatch value) whenever the
+        // row carries no override, so an unstyled row tests false and keeps the
+        // adaptive default above — the NEXUS cycle-10 §6 defect (raw actual/target
+        // stuck on #5e5d5a over a dark report) stays fixed. True → the colour is
+        // DATA: painted verbatim under every mode, never through forcedInk.
+        const resolvedValuesColor = this.valuesColorHelper?.getColorForMeasure(instanceObjects, "valuesColor");
+        const valuesIsFx = isFxResolved(resolvedValuesColor, setValuesColor);
+        const valuesInk = valuesIsFx ? resolvedValuesColor : adaptiveValuesDefault;
+        const subValueColor = this.isHighContrast ? hcFg : valuesInk;
         const valFontSize = valueSettings.valuesFontSize.value > 0
             ? valueSettings.valuesFontSize.value : fontSize;
         const setLabelColor = valueSettings.labelColor.value?.value || "#8a8985";
@@ -1160,12 +1168,13 @@ export class Visual implements IVisual {
             pv.style.textDecoration = valuesDecoration;
             pv.style.fontFeatureSettings = TABULAR_NUMS;
             pv.style.lineHeight = "1.2";
-            // A per-row fx / "set for this row" override is a DATA colour and
-            // is EXEMPT from the forced-mode override entirely (#819 rule 3);
-            // the card-level constant is a pane INK and runs the shared law,
-            // whose mode default here is the band-derived ink.
+            // An fx / "set for this row" resolved colour is DATA and is EXEMPT
+            // from the forced-mode override entirely (#819 rule 3), decided by
+            // the one shared test above; the card-level constant is a pane INK
+            // and runs the shared law, whose mode default here is the
+            // band-derived ink.
             const pctColor = hc.active ? hc.color
-                : hasValuesOverride ? resolvedValuesColor
+                : valuesIsFx ? resolvedValuesColor
                     : forcedInk(setValuesColor, this.inkOn(rowSurfaceHex, signalHex), codex,
                         !objectOverrides?.valuesColor);
             pv.style.color = pctColor;
