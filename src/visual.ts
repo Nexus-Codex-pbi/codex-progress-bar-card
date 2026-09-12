@@ -34,6 +34,7 @@ import { surfaceTokens, mix, accentBarGradient, TABULAR_NUMS } from "./shared/de
 import { applyBorder } from "./shared/borderSettings";
 import { makeCornerBrackets, CardSignatureHandle } from "./shared/cardSignature";
 import { applyCardSignature } from "./shared/cardSignatureSettings";
+import { resolveCodexTheme, neonColorFor, neonShadow, ResolvedCodexTheme } from "./shared/codexThemeSettings";
 import { settle } from "./shared/motion";
 import { applyHighContrast, statusGlyph } from "./shared/highContrast";
 import { LicenseGate } from "./shared/licensing";
@@ -101,12 +102,28 @@ export class Visual implements IVisual {
     private valuesColorHelper: ColorHelper | null = null;
     private layoutMode: string = "list";
     private themeBaseHex: string = "#ffffff";
+    // ─── Nexus Codex Theme (#819) ──────────────────────────────────────
+    // ONE resolved object per update(), resolved in update() beside the
+    // theme pick and read by renderTitle/renderRow/renderEmptyState — the
+    // card is never resolved twice, and every renderer sees the same
+    // surface/glow budget.
+    private codex: ResolvedCodexTheme | null = null;
     private compactRows = false;
     private valuesWidth = 96;
     private trackWidth = 0;
 
     private get gridTemplate(): string {
         return this.compactRows ? "minmax(0, 1fr)" : `90px minmax(0, 1fr) ${this.valuesWidth}px`;
+    }
+
+    /** A forced Codex mode (Dark/Light/Neon) OWNS the text inks against its
+     *  OWN composited surface: every "adapt this ink only when the user left
+     *  it at the default" clause becomes "adapt when forced OR default". A
+     *  pane ink a user chose for a white card is not a choice about the Codex
+     *  dark surface. Accent / band / fx colours are NOT inks and stay the
+     *  user's. Auto (and therefore high contrast) keeps every pane ink. */
+    private get inkOverride(): boolean {
+        return !!this.codex && this.codex.mode !== "auto";
     }
 
     // v3 card signature — one corner-bracket pair for the whole card
@@ -230,18 +247,42 @@ export class Visual implements IVisual {
             // report), and an untouched default still falls through to the
             // palette background exactly as before.
             const paletteBg = this.colorPalette?.background?.value || "#ffffff";
-            const visibleSurfaceHex = compositeOver(bgHex, bgTransparencyPct, paletteBg);
-            const theme: Theme = surfaceTone(visibleSurfaceHex);
-            this.themeBaseHex = visibleSurfaceHex;
+            let visibleSurfaceHex = compositeOver(bgHex, bgTransparencyPct, paletteBg);
+            const autoTheme: Theme = surfaceTone(visibleSurfaceHex);
             const hc = applyHighContrast(this.colorPalette, { fallbackColor: "#00d9ff" });
 
+            // ─── Nexus Codex Theme (#819): a mode switch ABOVE the automatic
+            // pick, inserted at the ONE place this visual derives its theme.
+            // Auto returns exactly the values derived above (zero pixel
+            // change); Dark/Light/Neon paint the Codex surface at the card's
+            // own Surface Transparency instead of the user's Background
+            // colour and force the token set. High contrast already collapsed
+            // to Auto inside the resolver — no HC branch of our own here.
+            const codex = resolveCodexTheme(this.formattingSettings.codexTheme, {
+                hcActive: hc.active, autoTheme, autoBgHex: bgHex, autoTransparencyPct: bgTransparencyPct,
+                behindHex: paletteBg,
+            });
+            this.codex = codex;
+            const theme: Theme = codex.theme;
+            if (codex.mode !== "auto") {
+                visibleSurfaceHex = codex.surfaceHex;
+                this.container.style.backgroundColor = toRgba(codex.bgHex, codex.transparencyPct);
+            }
+            // Every renderer judges its ink against THIS — header captions,
+            // axis ticks, the axis caption, axis titles and the empty state
+            // are already unconditionally adaptive off themeBaseHex, so
+            // repointing it at the Codex surface is all they need.
+            this.themeBaseHex = visibleSurfaceHex;
+
             // Corner-bracket re-tint each update (created once in the constructor).
+            // The signature is an ACCENT: under Neon it takes the flare colour
+            // (scope "flare") and the card's glow budget.
             applyCardSignature(this.cornerSignature, this.formattingSettings.cardSignature, {
-                autoHex: "#00d9ff",
+                autoHex: neonColorFor("#00d9ff", codex),
                 hcActive: hc.active,
                 hcColor: hc.color,
                 mirror: true,
-                glowMix: hc.active ? 0 : (theme === "dark" ? 55 : 0),
+                glowMix: hc.active ? 0 : codex.neon ? codex.glow : (theme === "dark" ? 55 : 0),
                 muted: false,
             });
 
@@ -490,7 +531,10 @@ export class Visual implements IVisual {
             // swaps to the dark text token on dark surfaces.
             const setTitle = t.titleColor.value.value;
             const explicit = this.lastUpdateOptions?.dataViews?.[0]?.metadata?.objects?.titleSettings?.titleColor;
-            const adaptiveTitle = explicit ? setTitle : this.inkOn(this.themeBaseHex, setTitle);
+            // Adapt when the Codex mode is FORCED or when the user left the
+            // default (#819) — a forced surface owns the title ink.
+            const adaptiveTitle = explicit && !this.inkOverride
+                ? setTitle : this.inkOn(this.themeBaseHex, setTitle);
             titleEl.style.color = this.isHighContrast ? this.colorPalette.foreground.value : adaptiveTitle;
         }
         titleEl.style.padding = "8px 10px 0";
@@ -795,8 +839,11 @@ export class Visual implements IVisual {
         const objectOverrides = this.lastUpdateOptions?.dataViews?.[0]?.metadata?.objects?.valueSettings;
 
         // Text settings (adaptive on untouched defaults, per row surface)
+        // Each "adapt only on the untouched default" clause below also adapts
+        // when a Codex mode is FORCED (#819) — see the inkOverride getter.
         const setCategoryColor = valueSettings.categoryColor.value?.value || "#1a1a1a";
-        const adaptiveCategoryDefault = objectOverrides?.categoryColor ? setCategoryColor
+        const adaptiveCategoryDefault = objectOverrides?.categoryColor && !this.inkOverride
+            ? setCategoryColor
             : this.inkOn(rowSurfaceHex, setCategoryColor);
         const categoryColor = this.isHighContrast ? hcFg : adaptiveCategoryDefault;
         const catFontSize = valueSettings.categoryFontSize.value > 0
@@ -804,7 +851,8 @@ export class Visual implements IVisual {
 
         const instanceObjects = row.objects;
         const setValuesColor = valueSettings.valuesColor.value?.value || "#5e5d5a";
-        const adaptiveValuesDefault = objectOverrides?.valuesColor ? setValuesColor : this.mutedOn(rowSurfaceHex);
+        const adaptiveValuesDefault = objectOverrides?.valuesColor && !this.inkOverride
+            ? setValuesColor : this.mutedOn(rowSurfaceHex);
         // ColorHelper.getColorForMeasure falls back to its own constructed
         // default (the card's swatch value) whenever the row carries no
         // override, so `?? adaptiveValuesDefault` could never fire and the
@@ -820,7 +868,8 @@ export class Visual implements IVisual {
         const valFontSize = valueSettings.valuesFontSize.value > 0
             ? valueSettings.valuesFontSize.value : fontSize;
         const setLabelColor = valueSettings.labelColor.value?.value || "#8a8985";
-        const adaptiveLabelDefault = objectOverrides?.labelColor ? setLabelColor : this.mutedOn(rowSurfaceHex);
+        const adaptiveLabelDefault = objectOverrides?.labelColor && !this.inkOverride
+            ? setLabelColor : this.mutedOn(rowSurfaceHex);
         const labelColor = this.isHighContrast ? hcFg : adaptiveLabelDefault;
         const lblFontSize = valueSettings.labelFontSize.value > 0
             ? valueSettings.labelFontSize.value
@@ -886,6 +935,24 @@ export class Visual implements IVisual {
             signalHex = colorFor[rowBand].value?.value || fallback[rowBand];
         }
         const glowMix = hc.active ? 0 : (theme === "dark" ? 50 : 0);
+
+        // ─── Neon (#819) ───────────────────────────────────────────────
+        // Neon glows the FILLED portion of a track (bar fill, over-target
+        // block, lit LED segments) and the percentage readout, at the card's
+        // Glow Strength. What it deliberately does NOT touch: the empty
+        // track / unlit blocks (no glow at all, unchanged), and the violet
+        // TARGET TICK + the gridlines — those are threshold/axis marks, not
+        // data marks, so they keep their legacy dark-theme `glowMix` budget
+        // and never scale with the Glow Strength slider.
+        //
+        // The bar itself keeps the user's band / fixed colour: a band colour
+        // is the DATA, and the contract leaves accent/band/data/fx colours
+        // the user's. Only the GLOW is re-hued — flare scope takes the card's
+        // Flare Colour, "All selected colours" glows in the bar's own hue.
+        const codex = this.codex;
+        const neon = !!codex && codex.neon && !hc.active;
+        const neonGlow = codex?.glow ?? 0;
+        const glowHex = codex ? neonColorFor(signalHex, codex) : signalHex;
 
         // ─── 120%-scale target-in-track geometry ───────────────────────
         const rawPct = (row.currentValue / row.maxValue) * 100;
@@ -983,12 +1050,16 @@ export class Visual implements IVisual {
                     block.style.background = hc.color;
                 } else if (over) {
                     block.style.background = mix(signalHex, "#ffffff", 0.45);
-                    block.style.boxShadow = glowMix > 0
-                        ? `0 0 8px color-mix(in srgb, ${signalHex} 70%, transparent)` : "none";
+                    block.style.boxShadow = neon
+                        ? neonShadow(glowHex, neonGlow)
+                        : glowMix > 0
+                            ? `0 0 8px color-mix(in srgb, ${signalHex} 70%, transparent)` : "none";
                 } else {
                     block.style.background = signalHex;
-                    block.style.boxShadow = glowMix > 0
-                        ? `0 0 5px color-mix(in srgb, ${signalHex} ${glowMix}%, transparent)` : "none";
+                    block.style.boxShadow = neon
+                        ? neonShadow(glowHex, neonGlow)
+                        : glowMix > 0
+                            ? `0 0 5px color-mix(in srgb, ${signalHex} ${glowMix}%, transparent)` : "none";
                 }
                 blocksEl.appendChild(block);
             }
@@ -1007,8 +1078,10 @@ export class Visual implements IVisual {
                 fill.style.background = hc.color;
             } else {
                 fill.style.background = accentBarGradient(signalHex);
-                fill.style.boxShadow = glowMix > 0
-                    ? `0 0 8px color-mix(in srgb, ${signalHex} ${glowMix}%, transparent)` : "none";
+                fill.style.boxShadow = neon
+                    ? neonShadow(glowHex, neonGlow)
+                    : glowMix > 0
+                        ? `0 0 8px color-mix(in srgb, ${signalHex} ${glowMix}%, transparent)` : "none";
             }
             track.appendChild(fill);
 
@@ -1024,7 +1097,9 @@ export class Visual implements IVisual {
                     over.style.background = hc.color;
                 } else {
                     over.style.background = `linear-gradient(180deg, #ffffff, ${mix(signalHex, "#ffffff", 0.4)} 60%, ${signalHex})`;
-                    over.style.boxShadow = `0 0 12px color-mix(in srgb, ${signalHex} 75%, transparent)`;
+                    over.style.boxShadow = neon
+                        ? neonShadow(glowHex, neonGlow)
+                        : `0 0 12px color-mix(in srgb, ${signalHex} 75%, transparent)`;
                 }
                 track.appendChild(over);
             }
@@ -1039,6 +1114,9 @@ export class Visual implements IVisual {
         tick.style.width = "3px";
         tick.style.borderRadius = "2px";
         tick.style.background = hc.active ? hc.color : targetToken(theme);
+        // Deliberately `glowMix`, not the Neon budget: the target tick is a
+        // threshold mark, and Neon's flare belongs to the filled portion of
+        // the track (see the Neon note above). Do not "fix" this to neonShadow.
         if (!hc.active && glowMix > 0) {
             tick.style.boxShadow = `0 0 6px color-mix(in srgb, ${targetToken(theme)} ${glowMix}%, transparent)`;
         }
@@ -1079,9 +1157,19 @@ export class Visual implements IVisual {
             pv.style.textDecoration = valuesDecoration;
             pv.style.fontFeatureSettings = TABULAR_NUMS;
             pv.style.lineHeight = "1.2";
+            // A per-row fx / "set for this row" override is a DATA colour and
+            // stays the user's under every mode; the card-level constant is a
+            // pane INK, which a forced Codex mode takes over (#819).
             const hasExplicitValuesColor = hasValuesOverride
-                || !!this.lastUpdateOptions?.dataViews?.[0]?.metadata?.objects?.valueSettings?.valuesColor;
-            pv.style.color = hc.active ? hc.color : hasExplicitValuesColor ? resolvedValuesColor : this.inkOn(rowSurfaceHex, signalHex);
+                || (!this.inkOverride
+                    && !!this.lastUpdateOptions?.dataViews?.[0]?.metadata?.objects?.valueSettings?.valuesColor);
+            const pctColor = hc.active ? hc.color
+                : hasExplicitValuesColor ? resolvedValuesColor : this.inkOn(rowSurfaceHex, signalHex);
+            pv.style.color = pctColor;
+            // Neon: the row's headline readout flares — in the Flare Colour
+            // under scope "flare", in its own ink under "All selected colours".
+            // The actual/target sub-value below is body text and never flares.
+            pv.style.textShadow = neon ? neonShadow(neonColorFor(pctColor, codex), neonGlow) : "";
             const glyph = hc.active && rowBand ? `${statusGlyph(rowBand)} ` : "";
             pv.textContent = glyph + pctText;
             valueWrap.appendChild(pv);
@@ -1304,6 +1392,7 @@ export class Visual implements IVisual {
      * properties and latest formatting values.
      */
     public getFormattingModel(): powerbi.visuals.FormattingModel {
+        this.formattingSettings.codexTheme.reveal();
         return this.formattingSettingsService.buildFormattingModel(this.formattingSettings);
     }
 }
